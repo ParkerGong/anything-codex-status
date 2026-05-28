@@ -414,6 +414,34 @@ class ServerHelpersTest(unittest.TestCase):
 
         self.assertEqual(selected, "custom:ikun")
 
+    def test_selected_pet_package_reads_config_without_tomllib(self):
+        old_config = server.CODEX_CONFIG
+        old_global_state = server.CODEX_GLOBAL_STATE
+        old_tomllib = server.tomllib
+        old_override = os.environ.pop("CODEX_STATUS_PET_ID", None)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = Path(tmpdir) / "config.toml"
+            global_state = Path(tmpdir) / "state.json"
+            config.write_text(
+                'model = "gpt"\n[desktop]\nselected-avatar-id = "custom:ikun"\n',
+                encoding="utf-8",
+            )
+            server.CODEX_CONFIG = config
+            server.CODEX_GLOBAL_STATE = global_state
+            server.tomllib = None
+            try:
+                selected = server.selected_pet_package_id(
+                    [{"id": "codex"}, {"id": "custom:ikun"}]
+                )
+            finally:
+                server.CODEX_CONFIG = old_config
+                server.CODEX_GLOBAL_STATE = old_global_state
+                server.tomllib = old_tomllib
+                if old_override is not None:
+                    os.environ["CODEX_STATUS_PET_ID"] = old_override
+
+        self.assertEqual(selected, "custom:ikun")
+
     def test_dashboard_contains_task_visibility_toggle(self):
         html = server.INDEX_HTML
 

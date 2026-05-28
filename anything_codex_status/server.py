@@ -1399,13 +1399,40 @@ def list_pet_packages():
     return list_official_pet_packages() + list_custom_pet_packages()
 
 
+def parse_selected_avatar_id_toml_fallback(text):
+    in_desktop = False
+    for raw_line in text.splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            in_desktop = line.strip("[]").strip() == "desktop"
+            continue
+        if not in_desktop or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key.strip() != "selected-avatar-id":
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            return value[1:-1]
+        return value or None
+    return None
+
+
 def read_selected_avatar_id_from_config():
-    if not CODEX_CONFIG.is_file() or tomllib is None:
+    if not CODEX_CONFIG.is_file():
         return None
     try:
-        config = tomllib.loads(CODEX_CONFIG.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError):
+        text = CODEX_CONFIG.read_text(encoding="utf-8")
+    except OSError:
         return None
+    if tomllib is None:
+        return parse_selected_avatar_id_toml_fallback(text)
+    try:
+        config = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return parse_selected_avatar_id_toml_fallback(text)
     value = (config.get("desktop") or {}).get("selected-avatar-id")
     return value if isinstance(value, str) and value else None
 
