@@ -1,0 +1,18 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - name: Compile
+        run: python -m py_compile server.py anything_codex_status/server.py scripts/install_launch_agent.py codex-skill/anything-codex-status/scripts/codex_status_server.py codex-skill/anything-codex-status/scripts/install_launch_agent.py
+      - name: Test
+        run: python -m unittest discover -s tests

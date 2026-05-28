@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "anything-codex-status"
+version = "0.1.0"
+description = "A phone-friendly local dashboard for monitoring Codex task status and usage quotas."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+  { name = "Parker Six" }
+]
+keywords = ["codex", "dashboard", "tailscale", "status", "iphone", "kindle"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Web Environment",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Topic :: Utilities"
+]
+
+[project.scripts]
+anything-codex-status = "anything_codex_status.server:main"
+
+[tool.setuptools]
+packages = ["anything_codex_status"]

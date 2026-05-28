@@ -1,0 +1,4 @@
+interface:
+  display_name: "Anything Codex Status"
+  short_description: "Run a phone-friendly Codex status screen"
+  default_prompt: "Use $anything-codex-status to start or repair my Codex phone status dashboard."
