@@ -1,5 +1,7 @@
 import json
+import os
 import sqlite3
+import struct
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,6 +10,28 @@ from anything_codex_status import server
 
 
 class ServerHelpersTest(unittest.TestCase):
+    def write_fake_asar(self, path, entries):
+        header = {"files": {}}
+        offset = 0
+        payload = bytearray()
+        for name, data in entries.items():
+            node = header
+            parts = name.split("/")
+            for part in parts[:-1]:
+                node = node["files"].setdefault(part, {"files": {}})
+            node["files"][parts[-1]] = {"size": len(data), "offset": str(offset)}
+            payload.extend(data)
+            offset += len(data)
+        header_bytes = json.dumps(header, separators=(",", ":")).encode("utf-8")
+        packed_size = len(header_bytes) + 9
+        base_offset = 8 + packed_size
+        path.write_bytes(
+            struct.pack("<IIII", 4, packed_size, len(header_bytes) + 5, len(header_bytes))
+            + header_bytes
+            + b"\0" * (base_offset - 16 - len(header_bytes))
+            + bytes(payload)
+        )
+
     def test_compact_title_prefers_short_database_title(self):
         title = server.compact_title(
             ("Short task", False),
@@ -256,6 +280,7 @@ class ServerHelpersTest(unittest.TestCase):
 
     def test_list_pet_packages_returns_public_manifest(self):
         old_pets_dir = server.PETS_DIR
+        old_asar = server.CODEX_APP_ASAR
         with tempfile.TemporaryDirectory() as tmpdir:
             pets_dir = Path(tmpdir) / "pets"
             pet_dir = pets_dir / "duodong"
@@ -275,22 +300,27 @@ class ServerHelpersTest(unittest.TestCase):
                 encoding="utf-8",
             )
             server.PETS_DIR = pets_dir
+            server.CODEX_APP_ASAR = Path(tmpdir) / "missing.asar"
             try:
                 pets = server.list_pet_packages()
-                image = server.read_pet_spritesheet("duodong")
+                image = server.read_pet_spritesheet("custom:duodong")
             finally:
                 server.PETS_DIR = old_pets_dir
+                server.CODEX_APP_ASAR = old_asar
 
         self.assertEqual(len(pets), 1)
-        self.assertEqual(pets[0]["id"], "duodong")
+        self.assertEqual(pets[0]["id"], "custom:duodong")
+        self.assertEqual(pets[0]["local_id"], "duodong")
+        self.assertEqual(pets[0]["source"], "custom")
         self.assertEqual(pets[0]["display_name"], "Duo Dong")
-        self.assertEqual(pets[0]["spritesheet_url"], "/pets/duodong/spritesheet.webp")
+        self.assertEqual(pets[0]["spritesheet_url"], "/pets/custom%3Aduodong/spritesheet.webp")
         self.assertEqual(pets[0]["states"]["running"], 7)
         self.assertNotIn("privateField", pets[0])
         self.assertEqual(image, b"webp")
 
     def test_pet_spritesheet_path_cannot_escape_pet_directory(self):
         old_pets_dir = server.PETS_DIR
+        old_asar = server.CODEX_APP_ASAR
         with tempfile.TemporaryDirectory() as tmpdir:
             pets_dir = Path(tmpdir) / "pets"
             pet_dir = pets_dir / "duodong"
@@ -301,16 +331,88 @@ class ServerHelpersTest(unittest.TestCase):
                 encoding="utf-8",
             )
             server.PETS_DIR = pets_dir
+            server.CODEX_APP_ASAR = Path(tmpdir) / "missing.asar"
             try:
                 pets = server.list_pet_packages()
-                image = server.read_pet_spritesheet("duodong")
-                escaped = server.read_pet_spritesheet("../secret")
+                image = server.read_pet_spritesheet("custom:duodong")
+                escaped = server.read_pet_spritesheet("custom:../secret")
             finally:
                 server.PETS_DIR = old_pets_dir
+                server.CODEX_APP_ASAR = old_asar
 
         self.assertEqual(pets, [])
         self.assertIsNone(image)
         self.assertIsNone(escaped)
+
+    def test_official_pet_package_reads_spritesheet_from_codex_asar(self):
+        old_asar = server.CODEX_APP_ASAR
+        with tempfile.TemporaryDirectory() as tmpdir:
+            asar = Path(tmpdir) / "app.asar"
+            self.write_fake_asar(
+                asar,
+                {"webview/assets/codex-spritesheet-v4-Bl6P89d_.webp": b"official-webp"},
+            )
+            server.CODEX_APP_ASAR = asar
+            server.load_asar_header.cache_clear()
+            server.official_spritesheet_paths.cache_clear()
+            try:
+                pets = server.list_official_pet_packages()
+                image = server.read_pet_spritesheet("codex")
+            finally:
+                server.CODEX_APP_ASAR = old_asar
+                server.load_asar_header.cache_clear()
+                server.official_spritesheet_paths.cache_clear()
+
+        self.assertEqual(len(pets), 1)
+        self.assertEqual(pets[0]["id"], "codex")
+        self.assertEqual(pets[0]["source"], "official")
+        self.assertEqual(pets[0]["spritesheet_url"], "/pets/codex/spritesheet.webp")
+        self.assertEqual(image, b"official-webp")
+
+    def test_official_pet_package_survives_spritesheet_hash_change(self):
+        old_asar = server.CODEX_APP_ASAR
+        with tempfile.TemporaryDirectory() as tmpdir:
+            asar = Path(tmpdir) / "app.asar"
+            self.write_fake_asar(
+                asar,
+                {"webview/assets/codex-spritesheet-v5-NewHash.webp": b"new-official-webp"},
+            )
+            server.CODEX_APP_ASAR = asar
+            server.load_asar_header.cache_clear()
+            server.official_spritesheet_paths.cache_clear()
+            try:
+                pets = server.list_official_pet_packages()
+                image = server.read_pet_spritesheet("codex")
+            finally:
+                server.CODEX_APP_ASAR = old_asar
+                server.load_asar_header.cache_clear()
+                server.official_spritesheet_paths.cache_clear()
+
+        self.assertEqual(len(pets), 1)
+        self.assertEqual(pets[0]["id"], "codex")
+        self.assertEqual(image, b"new-official-webp")
+
+    def test_selected_pet_package_follows_codex_avatar_setting(self):
+        old_config = server.CODEX_CONFIG
+        old_global_state = server.CODEX_GLOBAL_STATE
+        old_override = os.environ.pop("CODEX_STATUS_PET_ID", None)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = Path(tmpdir) / "config.toml"
+            global_state = Path(tmpdir) / "state.json"
+            config.write_text('[desktop]\nselected-avatar-id = "custom:ikun"\n', encoding="utf-8")
+            server.CODEX_CONFIG = config
+            server.CODEX_GLOBAL_STATE = global_state
+            try:
+                selected = server.selected_pet_package_id(
+                    [{"id": "codex"}, {"id": "custom:duodong"}, {"id": "custom:ikun"}]
+                )
+            finally:
+                server.CODEX_CONFIG = old_config
+                server.CODEX_GLOBAL_STATE = old_global_state
+                if old_override is not None:
+                    os.environ["CODEX_STATUS_PET_ID"] = old_override
+
+        self.assertEqual(selected, "custom:ikun")
 
     def test_dashboard_contains_task_visibility_toggle(self):
         html = server.INDEX_HTML
@@ -322,6 +424,8 @@ class ServerHelpersTest(unittest.TestCase):
         self.assertIn("codex-status-show-task", html)
         self.assertIn("codex-status-show-pet", html)
         self.assertIn('fetch("/api/pets"', html)
+        self.assertIn("style.backgroundImage", html)
+        self.assertIn("function maybeRefreshPets", html)
         self.assertIn("function detectPetFrameCounts", html)
         self.assertIn("statusToPetState", html)
         self.assertIn('state.kind === "ready"', html)

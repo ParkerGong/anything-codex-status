@@ -2,11 +2,18 @@
 import json
 import os
 import sqlite3
+import struct
 import time
 from datetime import datetime, timezone
+from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, unquote, urlparse
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 fallback
+    tomllib = None
 
 
 PORT = int(os.environ.get("CODEX_STATUS_PORT", "8765"))
@@ -19,6 +26,10 @@ GOALS_DB = CODEX_HOME / "goals_1.sqlite"
 ACCOUNTS_REGISTRY = CODEX_HOME / "accounts" / "registry.json"
 SESSION_INDEX = CODEX_HOME / "session_index.jsonl"
 PETS_DIR = CODEX_HOME / "pets"
+CODEX_CONFIG = CODEX_HOME / "config.toml"
+CODEX_GLOBAL_STATE = CODEX_HOME / ".codex-global-state.json"
+CODEX_APP = Path(os.environ.get("CODEX_STATUS_CODEX_APP", "/Applications/Codex.app"))
+CODEX_APP_ASAR = CODEX_APP / "Contents" / "Resources" / "app.asar"
 PET_FRAME_WIDTH = 192
 PET_FRAME_HEIGHT = 208
 PET_FRAMES_PER_ROW = 8
@@ -34,6 +45,65 @@ PET_STATES = [
     "review",
 ]
 FINAL_PHASES = {"final", "final_answer"}
+OFFICIAL_PET_ASSETS = [
+    {
+        "id": "codex",
+        "asset_ref": "codex",
+        "display_name": "Codex",
+        "description": "The original Codex companion.",
+        "spritesheet_path": "webview/assets/codex-spritesheet-v4-Bl6P89d_.webp",
+    },
+    {
+        "id": "dewey",
+        "asset_ref": "dewey",
+        "display_name": "Dewey",
+        "description": "A tidy duck for calm workspace days.",
+        "spritesheet_path": "webview/assets/dewey-spritesheet-v4-gAYk_M9g.webp",
+    },
+    {
+        "id": "fireball",
+        "asset_ref": "fireball",
+        "display_name": "Fireball",
+        "description": "Hot path energy for fast iteration.",
+        "spritesheet_path": "webview/assets/fireball-spritesheet-v4-BtU8R9Qp.webp",
+    },
+    {
+        "id": "rocky",
+        "asset_ref": "rocky",
+        "display_name": "Rocky",
+        "description": "A steady rock when the diff gets large.",
+        "spritesheet_path": "webview/assets/rocky-spritesheet-v4-3RlTi26B.webp",
+    },
+    {
+        "id": "seedy",
+        "asset_ref": "seedy",
+        "display_name": "Seedy",
+        "description": "Small green shoots for new ideas.",
+        "spritesheet_path": "webview/assets/seedy-spritesheet-v4-CdlE_fn9.webp",
+    },
+    {
+        "id": "stacky",
+        "asset_ref": "stacky",
+        "display_name": "Stacky",
+        "description": "A balanced stack for deep work.",
+        "spritesheet_path": "webview/assets/stacky-spritesheet-v4-CaUJd4fY.webp",
+    },
+    {
+        "id": "bsod",
+        "asset_ref": "bsod",
+        "display_name": "BSOD",
+        "description": "A compact blue-screen companion.",
+        "spritesheet_path": "webview/assets/bsod-spritesheet-v4-BRrRVy1T.webp",
+    },
+    {
+        "id": "null-signal",
+        "asset_ref": "null-signal",
+        "display_name": "Null Signal",
+        "description": "Quiet signal from the void.",
+        "spritesheet_path": "webview/assets/null-signal-spritesheet-v4-CCoTR-8t.webp",
+    },
+]
+OFFICIAL_PET_ASSETS_BY_ID = {item["id"]: item for item in OFFICIAL_PET_ASSETS}
 
 
 INDEX_HTML = """<!doctype html>
@@ -632,7 +702,9 @@ INDEX_HTML = """<!doctype html>
       review: 8,
     };
     const pet = {
+      id: null,
       ready: false,
+      loading: false,
       frame: 0,
       row: petRows.idle,
       state: "idle",
@@ -641,6 +713,10 @@ INDEX_HTML = """<!doctype html>
       frameHeight: 208,
       framesPerRow: 8,
       frameCounts: Array(9).fill(8),
+      spritesheetUrl: null,
+      imageLoaded: false,
+      imageRetry: 0,
+      lastPetCheck: 0,
     };
     let lastStatusData = null;
 
@@ -717,6 +793,27 @@ INDEX_HTML = """<!doctype html>
       });
     }
 
+    function cacheBustedPetUrl(url) {
+      const separator = url.includes("?") ? "&" : "?";
+      return `${url}${separator}r=${Date.now()}`;
+    }
+
+    function setPetBackground(url, retry = false) {
+      const displayUrl = retry ? cacheBustedPetUrl(url) : url;
+      $("petSprite").style.backgroundImage = `url("${displayUrl}")`;
+      loadImage(displayUrl)
+        .then((image) => {
+          if (pet.spritesheetUrl !== url) return;
+          pet.imageLoaded = true;
+          pet.frameCounts = detectPetFrameCounts(image);
+          drawPetFrame();
+        })
+        .catch(() => {
+          if (pet.spritesheetUrl !== url) return;
+          pet.imageLoaded = false;
+        });
+    }
+
     function detectPetFrameCounts(image) {
       const rows = Math.max(1, Math.floor(image.naturalHeight / pet.frameHeight));
       const cols = Math.max(1, Math.floor(image.naturalWidth / pet.frameWidth));
@@ -747,26 +844,58 @@ INDEX_HTML = """<!doctype html>
       }
     }
 
-    async function loadPets() {
+    async function loadPets(force = false) {
+      if (pet.loading) return;
+      pet.loading = true;
+      pet.lastPetCheck = Date.now();
       try {
         const res = await fetch("/api/pets", { cache: "no-store" });
         const data = await res.json();
         const selected = (data.pets || []).find((item) => item.id === data.selected) || data.pets?.[0];
-        if (!selected?.spritesheet_url) return;
+        if (!selected?.spritesheet_url) {
+          pet.ready = false;
+          $("petDock").hidden = true;
+          return;
+        }
+        if (
+          !force &&
+          pet.id === selected.id &&
+          pet.spritesheetUrl === selected.spritesheet_url
+        ) {
+          if (!pet.imageLoaded && pet.imageRetry < 3) {
+            pet.imageRetry += 1;
+            setPetBackground(selected.spritesheet_url, true);
+          }
+          return;
+        }
         pet.frameWidth = selected.frame_width || 192;
         pet.frameHeight = selected.frame_height || 208;
         pet.framesPerRow = selected.frames_per_row || 8;
-        const image = await loadImage(selected.spritesheet_url);
-        pet.frameCounts = detectPetFrameCounts(image);
-        $("petSprite").style.backgroundImage = `url("${selected.spritesheet_url}")`;
+        pet.id = selected.id;
+        pet.spritesheetUrl = selected.spritesheet_url;
+        pet.imageLoaded = false;
+        pet.imageRetry = 0;
+        pet.frameCounts = Array(9).fill(pet.framesPerRow || 8);
         pet.ready = true;
+        pet.frame = 0;
+        pet.row = petRows[pet.state] ?? petRows.idle;
+        setPetBackground(selected.spritesheet_url);
         drawPetFrame();
         startPetAnimation();
         applyPetVisibility(localStorage.getItem("codex-status-show-pet") !== "0", false);
         if (lastStatusData) updatePet(lastStatusData);
       } catch (error) {
-        pet.ready = false;
-        $("petDock").hidden = true;
+        if (!pet.ready) {
+          $("petDock").hidden = true;
+        }
+      } finally {
+        pet.loading = false;
+      }
+    }
+
+    function maybeRefreshPets() {
+      if (Date.now() - pet.lastPetCheck > 10000) {
+        loadPets();
       }
     }
 
@@ -858,6 +987,7 @@ INDEX_HTML = """<!doctype html>
         $("server").textContent = text(data.server);
         $("clock").textContent = new Date().toLocaleTimeString("zh-CN", { hour12: false });
         updatePet(data);
+        maybeRefreshPets();
       } catch (error) {
         $("stateText").textContent = "OFFLINE";
         $("dot").className = "dot";
@@ -1055,7 +1185,13 @@ def query_active_account():
     }
 
 
+def quote_pet_id(pet_id):
+    return quote(pet_id, safe="")
+
+
 def resolve_pet_dir(pet_id):
+    if isinstance(pet_id, str) and pet_id.startswith("custom:"):
+        pet_id = pet_id.split(":", 1)[1]
     if not pet_id or pet_id in {".", ".."} or "/" in pet_id or "\\" in pet_id:
         return None
     try:
@@ -1091,6 +1227,10 @@ def resolve_pet_spritesheet(pet_dir, manifest):
     return image_path if image_path.is_file() else None
 
 
+def pet_state_map():
+    return {name: index for index, name in enumerate(PET_STATES)}
+
+
 def public_pet_package(pet_dir):
     manifest = load_pet_manifest(pet_dir)
     if not manifest:
@@ -1098,21 +1238,146 @@ def public_pet_package(pet_dir):
     spritesheet = resolve_pet_spritesheet(pet_dir, manifest)
     if not spritesheet:
         return None
-    pet_id = pet_dir.name
+    pet_id = f"custom:{pet_dir.name}"
     return {
         "id": pet_id,
+        "asset_ref": "codex",
+        "source": "custom",
+        "local_id": pet_dir.name,
         "display_name": manifest.get("displayName") or manifest.get("display_name") or pet_id,
         "description": manifest.get("description"),
         "kind": manifest.get("kind"),
-        "spritesheet_url": f"/pets/{quote(pet_id, safe='')}/spritesheet.webp",
+        "spritesheet_url": f"/pets/{quote_pet_id(pet_id)}/spritesheet.webp",
         "frame_width": PET_FRAME_WIDTH,
         "frame_height": PET_FRAME_HEIGHT,
         "frames_per_row": PET_FRAMES_PER_ROW,
-        "states": {name: index for index, name in enumerate(PET_STATES)},
+        "states": pet_state_map(),
     }
 
 
-def list_pet_packages():
+@lru_cache(maxsize=4)
+def load_asar_header(asar_path):
+    path = Path(asar_path)
+    with path.open("rb") as handle:
+        raw_header = handle.read(16)
+        if len(raw_header) != 16:
+            return None
+        _, packed_size, _, header_size = struct.unpack("<IIII", raw_header)
+        header_bytes = handle.read(header_size)
+    try:
+        header = json.loads(header_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return {"base_offset": 8 + packed_size, "header": header}
+
+
+def asar_entry(header, relative_path):
+    node = header
+    for part in relative_path.split("/"):
+        files = node.get("files") if isinstance(node, dict) else None
+        if not isinstance(files, dict) or part not in files:
+            return None
+        node = files[part]
+    return node if isinstance(node, dict) else None
+
+
+def iter_asar_file_paths(node, prefix=""):
+    files = node.get("files") if isinstance(node, dict) else None
+    if not isinstance(files, dict):
+        return
+    for name, child in sorted(files.items()):
+        relative_path = f"{prefix}/{name}" if prefix else name
+        child_files = child.get("files") if isinstance(child, dict) else None
+        if isinstance(child_files, dict):
+            yield from iter_asar_file_paths(child, relative_path)
+        else:
+            yield relative_path
+
+
+def read_asar_file(asar_path, relative_path):
+    try:
+        archive = load_asar_header(str(asar_path))
+        if not archive:
+            return None
+        entry = asar_entry(archive["header"], relative_path)
+        if not entry or entry.get("unpacked"):
+            return None
+        size = int(entry.get("size"))
+        offset = int(entry.get("offset"))
+        with Path(asar_path).open("rb") as handle:
+            handle.seek(archive["base_offset"] + offset)
+            return handle.read(size)
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def asar_has_file(asar_path, relative_path):
+    try:
+        archive = load_asar_header(str(asar_path))
+        return bool(archive and asar_entry(archive["header"], relative_path))
+    except OSError:
+        return False
+
+
+@lru_cache(maxsize=8)
+def official_spritesheet_paths(asar_path):
+    archive = load_asar_header(str(asar_path))
+    if not archive:
+        return {}
+    prefixes = {
+        asset["id"]: f"{asset['id']}-spritesheet-"
+        for asset in OFFICIAL_PET_ASSETS
+    }
+    found = {}
+    for relative_path in iter_asar_file_paths(archive["header"]):
+        if not relative_path.startswith("webview/assets/") or not relative_path.endswith(".webp"):
+            continue
+        filename = relative_path.rsplit("/", 1)[-1]
+        for pet_id, prefix in prefixes.items():
+            if filename.startswith(prefix):
+                found.setdefault(pet_id, relative_path)
+                break
+    return found
+
+
+def official_spritesheet_path(asset):
+    explicit_path = asset.get("spritesheet_path")
+    if explicit_path and asar_has_file(CODEX_APP_ASAR, explicit_path):
+        return explicit_path
+    return official_spritesheet_paths(str(CODEX_APP_ASAR)).get(asset["id"])
+
+
+def official_pet_package(asset):
+    if not official_spritesheet_path(asset):
+        return None
+    pet_id = asset["id"]
+    return {
+        "id": pet_id,
+        "asset_ref": asset["asset_ref"],
+        "source": "official",
+        "display_name": asset["display_name"],
+        "description": asset["description"],
+        "kind": "official",
+        "spritesheet_url": f"/pets/{quote_pet_id(pet_id)}/spritesheet.webp",
+        "frame_width": PET_FRAME_WIDTH,
+        "frame_height": PET_FRAME_HEIGHT,
+        "frames_per_row": PET_FRAMES_PER_ROW,
+        "states": pet_state_map(),
+    }
+
+
+def list_official_pet_packages():
+    if not CODEX_APP_ASAR.is_file():
+        return []
+    packages = []
+    for asset in OFFICIAL_PET_ASSETS:
+        package = official_pet_package(asset)
+        if package:
+            packages.append(package)
+    return packages
+
+
+def list_custom_pet_packages():
     if not PETS_DIR.is_dir():
         return []
     packages = []
@@ -1130,7 +1395,66 @@ def list_pet_packages():
     return packages
 
 
+def list_pet_packages():
+    return list_official_pet_packages() + list_custom_pet_packages()
+
+
+def read_selected_avatar_id_from_config():
+    if not CODEX_CONFIG.is_file() or tomllib is None:
+        return None
+    try:
+        config = tomllib.loads(CODEX_CONFIG.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    value = (config.get("desktop") or {}).get("selected-avatar-id")
+    return value if isinstance(value, str) and value else None
+
+
+def read_selected_avatar_id_from_global_state():
+    if not CODEX_GLOBAL_STATE.is_file():
+        return None
+    try:
+        state = json.loads(CODEX_GLOBAL_STATE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    atoms = state.get("electron-persisted-atom-state") or {}
+    value = atoms.get("selected-avatar-id")
+    return value if isinstance(value, str) and value else None
+
+
+def query_selected_avatar_id():
+    override = os.environ.get("CODEX_STATUS_PET_ID")
+    if override:
+        return override
+    return read_selected_avatar_id_from_config() or read_selected_avatar_id_from_global_state()
+
+
+def selected_pet_package_id(packages):
+    if not packages:
+        return None
+    ids = {package["id"] for package in packages}
+    selected = query_selected_avatar_id()
+    candidates = []
+    if selected:
+        candidates.append(selected)
+        if selected.startswith("custom:"):
+            candidates.append(selected.split(":", 1)[1])
+        else:
+            candidates.append(f"custom:{selected}")
+    candidates.extend(["codex", packages[0]["id"]])
+    for candidate in candidates:
+        if candidate in ids:
+            return candidate
+    return packages[0]["id"]
+
+
 def read_pet_spritesheet(pet_id):
+    official_asset = OFFICIAL_PET_ASSETS_BY_ID.get(pet_id)
+    if official_asset:
+        spritesheet_path = official_spritesheet_path(official_asset)
+        if not spritesheet_path:
+            return None
+        return read_asar_file(CODEX_APP_ASAR, spritesheet_path)
     pet_dir = resolve_pet_dir(pet_id)
     if not pet_dir:
         return None
@@ -1415,17 +1739,25 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         print(f"{self.client_address[0]} - {fmt % args}")
 
-    def send_headers(self, content_type, status=200, content_length=None):
+    def send_headers(self, content_type, status=200, content_length=None, cache_control="no-store"):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache_control)
         if content_length is not None:
             self.send_header("Content-Length", str(content_length))
         self.end_headers()
 
-    def send_bytes(self, body, content_type, status=200):
-        self.send_headers(content_type, status=status, content_length=len(body))
-        self.wfile.write(body)
+    def send_bytes(self, body, content_type, status=200, cache_control="no-store"):
+        self.send_headers(
+            content_type,
+            status=status,
+            content_length=len(body),
+            cache_control=cache_control,
+        )
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
     def do_GET(self):
         path = urlparse(self.path).path
@@ -1443,7 +1775,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/pets":
             pets = list_pet_packages()
             body = json.dumps(
-                {"pets": pets, "selected": pets[0]["id"] if pets else None},
+                {"pets": pets, "selected": selected_pet_package_id(pets)},
                 ensure_ascii=False,
             ).encode("utf-8")
             self.send_bytes(body, "application/json; charset=utf-8")
@@ -1452,7 +1784,7 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts) == 4 and parts[1] == "pets" and parts[3] == "spritesheet.webp":
             image = read_pet_spritesheet(unquote(parts[2]))
             if image is not None:
-                self.send_bytes(image, "image/webp")
+                self.send_bytes(image, "image/webp", cache_control="private, max-age=3600")
                 return
             self.send_bytes(b"Not found", "text/plain; charset=utf-8", status=404)
             return
@@ -1479,7 +1811,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/pets":
             pets = list_pet_packages()
             body = json.dumps(
-                {"pets": pets, "selected": pets[0]["id"] if pets else None},
+                {"pets": pets, "selected": selected_pet_package_id(pets)},
                 ensure_ascii=False,
             ).encode("utf-8")
             self.send_headers("application/json; charset=utf-8", content_length=len(body))
@@ -1488,7 +1820,11 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts) == 4 and parts[1] == "pets" and parts[3] == "spritesheet.webp":
             image = read_pet_spritesheet(unquote(parts[2]))
             if image is not None:
-                self.send_headers("image/webp", content_length=len(image))
+                self.send_headers(
+                    "image/webp",
+                    content_length=len(image),
+                    cache_control="private, max-age=3600",
+                )
                 return
             self.send_headers("text/plain; charset=utf-8", status=404, content_length=9)
             return

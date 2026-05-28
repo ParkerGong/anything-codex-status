@@ -21,7 +21,7 @@ Anything Codex Status 不是 Codex 的替代品，也不会接管你的任务。
 - 闲置设备变监控屏：能安装 Tailscale 的 iPhone、iPad、Android 手机、Android 平板都可以用。
 - 当前任务一眼可见：使用 Codex 左侧栏同款短标题，避免长 prompt 撑满页面。
 - 额度实时展示：显示 5h 额度、周额度、重置倒计时和当前套餐。
-- 桌宠状态气泡：如果本机存在 Codex 自定义 pet，页面会读取同一套 `pet.json` / `spritesheet.webp` 资产，在右下角显示运行状态动画和气泡。
+- 桌宠状态气泡：跟随 Codex 桌面端当前选择的桌宠；官方内置桌宠从本机 Codex.app 运行时读取，自定义桌宠从 `~/.codex/pets` 读取。
 - 隐私模式：关闭页面右上角 `Task` 开关后，只显示账号、套餐和额度，不显示任务内容。
 - Tailscale 优先：展示设备和运行 Codex 的电脑加入同一个 tailnet 后，用电脑的 `100.x.y.z` 地址访问。
 - Codex 可部署：新机器上把仓库链接交给 Codex，它可以边解释边检查环境，并协助部署。
@@ -40,7 +40,7 @@ Anything Codex Status 不是 Codex 的替代品，也不会接管你的任务。
 - 最近请求：显示最近一次用户请求摘要。
 - 最近活动：合并重复日志，显示工具调用、Codex 回复、额度采样等。
 - 运行状态：根据最近用户消息、最终回复和最新事件判断 `RUNNING` / `READY`。
-- 桌宠：读取 `~/.codex/pets/<pet-id>/pet.json` 声明的本地 spritesheet，并根据运行状态切换动画。
+- 桌宠：读取 `~/.codex/config.toml` 的 `[desktop].selected-avatar-id`，优先显示 Codex 当前选择；官方内置 spritesheet 从已安装的 Codex.app 读取，自定义 spritesheet 从 `~/.codex/pets/<pet-id>/pet.json` 声明读取，并根据运行状态切换动画。
 
 ---
 
@@ -277,8 +277,10 @@ Use $anything-codex-status to start or repair my Codex phone/tablet status dashb
 - `~/.codex/goals_1.sqlite`
 - `~/.codex/session_index.jsonl`
 - `~/.codex/accounts/registry.json`
+- `~/.codex/config.toml`
 - `~/.codex/pets/*/pet.json`
 - `~/.codex/pets/*/spritesheet.webp`
+- `/Applications/Codex.app/Contents/Resources/app.asar` 中的官方桌宠 spritesheet
 - 当前会话的 `rollout-*.jsonl`
 
 请注意：

@@ -9,7 +9,7 @@ Tell the user:
 - The dashboard is a local Python HTTP server.
 - It binds to `0.0.0.0` so phones or tablets on the same Tailscale network can reach it.
 - It reads local Codex state under `~/.codex`.
-- If local Codex pet assets exist under `~/.codex/pets`, it can serve their declared `pet.json` / `spritesheet.webp` for the on-page pet status bubble.
+- It follows the Codex desktop avatar selected in `~/.codex/config.toml`. Built-in Codex avatar spritesheets are read from the installed Codex app, and custom avatars are read from `~/.codex/pets`.
 - It does not call a model and does not consume Codex tokens.
 - It is unauthenticated, so it should stay on localhost for local checks or Tailscale for remote display access.
 
