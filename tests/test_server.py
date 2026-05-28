@@ -15,6 +15,24 @@ class ServerHelpersTest(unittest.TestCase):
 
         self.assertEqual(title, "Short task")
 
+    def test_query_sidebar_title_uses_session_index_thread_name(self):
+        old_index = server.SESSION_INDEX
+        with tempfile.TemporaryDirectory() as tmpdir:
+            index = Path(tmpdir) / "session_index.jsonl"
+            rows = [
+                {"id": "thread-1", "thread_name": "Old title"},
+                {"id": "thread-2", "thread_name": "Other title"},
+                {"id": "thread-1", "thread_name": "Sidebar title"},
+            ]
+            index.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+            server.SESSION_INDEX = index
+            try:
+                title = server.query_sidebar_title("thread-1")
+            finally:
+                server.SESSION_INDEX = old_index
+
+        self.assertEqual(title, "Sidebar title")
+
     def test_parse_rollout_deduplicates_activity_and_extracts_usage(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             rollout = Path(tmpdir) / "rollout.jsonl"
@@ -66,6 +84,53 @@ class ServerHelpersTest(unittest.TestCase):
             line for line in parsed["activity"] if line.endswith("CODEX Working")
         ]
         self.assertEqual(len(repeated_activity), 1)
+
+    def test_query_active_account_returns_public_summary_only(self):
+        old_registry = server.ACCOUNTS_REGISTRY
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = Path(tmpdir) / "registry.json"
+            registry.write_text(
+                json.dumps(
+                    {
+                        "activeAccountKey": "acct-2",
+                        "items": [
+                            {"accountKey": "acct-1", "email": "old@example.com"},
+                            {
+                                "accountKey": "acct-2",
+                                "email": "user@example.com",
+                                "profileName": "User Name",
+                                "accountName": "Personal",
+                                "workspaceName": "Personal",
+                                "plan": "plus",
+                                "authMode": "chatgpt",
+                                "hasActiveSubscription": True,
+                                "snapshotPath": "/private/path/auth.json",
+                            },
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            server.ACCOUNTS_REGISTRY = registry
+            try:
+                account = server.query_active_account()
+            finally:
+                server.ACCOUNTS_REGISTRY = old_registry
+
+        self.assertEqual(account["email"], "user@example.com")
+        self.assertEqual(account["plan"], "plus")
+        self.assertNotIn("snapshotPath", account)
+
+    def test_dashboard_contains_task_visibility_toggle(self):
+        html = server.INDEX_HTML
+
+        self.assertIn('id="showTaskToggle"', html)
+        self.assertIn("compact-mode", html)
+        self.assertIn("codex-status-show-task", html)
+        self.assertIn('id="account"', html)
+        self.assertIn('id="accountPlan"', html)
+        self.assertIn("function displayPlan", html)
+        self.assertIn('plan.startsWith("pro")', html)
 
     def test_skill_server_copy_matches_package_server(self):
         root = Path(__file__).resolve().parents[1]

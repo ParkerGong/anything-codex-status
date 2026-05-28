@@ -67,7 +67,9 @@ tail -n 50 ~/.codex/log/anything-codex-status.err.log
 - The dashboard shows the most recently updated Codex thread in the monitored workspace.
 - If no thread exists for the monitored workspace, it falls back to the globally most recently updated thread.
 - The large Current Task heading should use `thread.display_title`, not the raw database title, because raw titles may contain long first prompts.
+- Prefer the sidebar-style `thread_name` from `${CODEX_HOME:-~/.codex}/session_index.jsonl` when deriving `thread.display_title`.
 - Recent Activity should deduplicate duplicate `event_msg`/`response_item` records and keep the latest unique activity lines.
+- The Task switch should persist in browser `localStorage`; when off, the page should only show active account, plan, 5h quota, and weekly quota information.
 - Treat missing quota data as unknown; do not fabricate usage numbers.
 
 ## Common Fixes

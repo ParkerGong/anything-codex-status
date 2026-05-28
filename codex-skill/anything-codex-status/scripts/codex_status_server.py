@@ -15,6 +15,8 @@ WORKSPACE_ENV = os.environ.get("CODEX_STATUS_WORKSPACE")
 WORKSPACE = Path(WORKSPACE_ENV).expanduser().resolve() if WORKSPACE_ENV else Path.cwd().resolve()
 STATE_DB = CODEX_HOME / "state_5.sqlite"
 GOALS_DB = CODEX_HOME / "goals_1.sqlite"
+ACCOUNTS_REGISTRY = CODEX_HOME / "accounts" / "registry.json"
+SESSION_INDEX = CODEX_HOME / "session_index.jsonl"
 
 
 INDEX_HTML = """<!doctype html>
@@ -78,6 +80,14 @@ INDEX_HTML = """<!doctype html>
       padding-bottom: 12px;
     }
 
+    .top-actions {
+      display: flex;
+      align-items: flex-start;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
     h1 {
       margin: 0;
       font-size: 30px;
@@ -106,6 +116,57 @@ INDEX_HTML = """<!doctype html>
       font-size: 12px;
       font-weight: 700;
       white-space: nowrap;
+    }
+
+    .switch {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 30px;
+      padding: 4px 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 760;
+      user-select: none;
+    }
+
+    .switch input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .switch-track {
+      width: 38px;
+      height: 22px;
+      border: 1px solid #98a29e;
+      border-radius: 999px;
+      background: #dbe2dc;
+      transition: background 180ms ease, border-color 180ms ease;
+    }
+
+    .switch-thumb {
+      display: block;
+      width: 16px;
+      height: 16px;
+      margin: 2px;
+      border-radius: 50%;
+      background: #ffffff;
+      box-shadow: 0 1px 4px rgba(23, 27, 29, 0.28);
+      transition: transform 180ms ease;
+    }
+
+    .switch input:checked + .switch-track {
+      border-color: var(--accent);
+      background: var(--accent);
+    }
+
+    .switch input:checked + .switch-track .switch-thumb {
+      transform: translateX(16px);
     }
 
     .dot {
@@ -175,6 +236,12 @@ INDEX_HTML = """<!doctype html>
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 8px;
       margin-top: 12px;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
     }
 
     .mini {
@@ -278,6 +345,23 @@ INDEX_HTML = """<!doctype html>
       padding-top: 2px;
     }
 
+    body.compact-mode .subtitle,
+    body.compact-mode .task-panel,
+    body.compact-mode .runtime-panel,
+    body.compact-mode .activity-panel {
+      display: none;
+    }
+
+    body.compact-mode .grid {
+      grid-template-columns: minmax(0, 620px);
+      justify-content: center;
+      align-content: start;
+    }
+
+    body.compact-mode .account-panel {
+      box-shadow: var(--shadow);
+    }
+
     @media (orientation: landscape) and (max-height: 520px) {
       .shell { gap: 8px; padding: 10px 12px; }
       .topbar { padding-bottom: 8px; }
@@ -288,6 +372,7 @@ INDEX_HTML = """<!doctype html>
       .headline { font-size: 20px; }
       .task { -webkit-line-clamp: 3; font-size: 13px; }
       .usage { gap: 8px; }
+      .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .tokens { grid-template-columns: repeat(3, minmax(0, 1fr)); }
       .log { max-height: 88px; }
     }
@@ -306,11 +391,18 @@ INDEX_HTML = """<!doctype html>
         <h1>Codex Status</h1>
         <div class="subtitle" id="subtitle">Loading local thread...</div>
       </div>
-      <div class="live"><span class="dot" id="dot"></span><span id="stateText">SYNC</span></div>
+      <div class="top-actions">
+        <label class="switch" title="Show recent task">
+          <input type="checkbox" id="showTaskToggle" checked>
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+          <span>Task</span>
+        </label>
+        <div class="live"><span class="dot" id="dot"></span><span id="stateText">SYNC</span></div>
+      </div>
     </header>
 
     <section class="grid">
-      <article class="panel">
+      <article class="panel task-panel">
         <div class="label">Current Task</div>
         <div class="headline" id="title">--</div>
         <div class="task" id="task">Waiting for status data.</div>
@@ -323,6 +415,13 @@ INDEX_HTML = """<!doctype html>
       </article>
 
       <div class="usage">
+        <article class="panel compact account-panel">
+          <div class="summary-grid">
+            <div class="mini"><div class="label">Account</div><strong id="account">--</strong></div>
+            <div class="mini"><div class="label">Plan</div><strong id="accountPlan">--</strong></div>
+          </div>
+        </article>
+
         <article class="panel compact">
           <div class="meter-row">
             <div class="meter-top">
@@ -345,7 +444,7 @@ INDEX_HTML = """<!doctype html>
           </div>
         </article>
 
-        <article class="panel compact">
+        <article class="panel compact runtime-panel">
           <div class="tokens">
             <div><div class="label">Session</div><div class="big-number" id="contextPct">--</div></div>
             <div><div class="label">Last Turn</div><div class="big-number" id="lastTurn">--</div></div>
@@ -355,7 +454,7 @@ INDEX_HTML = """<!doctype html>
       </div>
     </section>
 
-    <article class="panel compact">
+    <article class="panel compact activity-panel">
       <div class="label">Recent Activity</div>
       <pre class="log" id="activity">--</pre>
     </article>
@@ -370,6 +469,15 @@ INDEX_HTML = """<!doctype html>
     const $ = (id) => document.getElementById(id);
     const fmt = new Intl.NumberFormat("en-US");
     const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+    const taskToggle = $("showTaskToggle");
+
+    function applyTaskVisibility(showTask, persist = true) {
+      document.body.classList.toggle("compact-mode", !showTask);
+      taskToggle.checked = showTask;
+      if (persist) {
+        localStorage.setItem("codex-status-show-task", showTask ? "1" : "0");
+      }
+    }
 
     function setMeter(id, fillId, value) {
       const label = $(id);
@@ -388,6 +496,17 @@ INDEX_HTML = """<!doctype html>
       return value === null || value === undefined || value === "" ? fallback : String(value);
     }
 
+    function displayPlan(ratePlan, accountPlan) {
+      const plan = text(ratePlan || accountPlan, "").toLowerCase();
+      if (!plan) return "Unknown";
+      if (plan.startsWith("pro")) return "Pro";
+      if (plan === "plus") return "Plus";
+      if (plan === "free") return "Free";
+      if (plan === "team" || plan === "teams") return "Team";
+      if (plan === "enterprise") return "Enterprise";
+      return text(ratePlan || accountPlan);
+    }
+
     async function refresh() {
       try {
         const res = await fetch("/api/status", { cache: "no-store" });
@@ -396,6 +515,9 @@ INDEX_HTML = """<!doctype html>
         const usage = data.usage || {};
         const rate = usage.rate_limits || {};
         const state = data.state || {};
+        const account = data.account || {};
+        const accountLabel = account.email || account.profile_name || account.account_name || account.auth_mode;
+        const planLabel = displayPlan(rate.plan_type, account.plan);
 
         $("title").textContent = text(thread.display_title || thread.title);
         $("task").textContent = text(data.latest_user_message || thread.preview, "No recent task text.");
@@ -413,9 +535,11 @@ INDEX_HTML = """<!doctype html>
         $("quota5hReset").textContent = rate.primary?.reset_relative || "5h quota source not seen yet";
         $("quotaWeekReset").textContent = rate.secondary?.reset_relative || "Weekly quota source not seen yet";
 
+        $("account").textContent = text(accountLabel, "Unknown");
+        $("accountPlan").textContent = text(planLabel, "Unknown");
         $("contextPct").textContent = usage.total_tokens ? compact.format(usage.total_tokens) : "--";
         $("lastTurn").textContent = usage.last_turn_tokens ? fmt.format(usage.last_turn_tokens) : "--";
-        $("plan").textContent = text(rate.plan_type);
+        $("plan").textContent = displayPlan(rate.plan_type, account.plan);
         $("activity").textContent = (data.activity || []).join("\\n") || "--";
         $("server").textContent = text(data.server);
         $("clock").textContent = new Date().toLocaleTimeString("zh-CN", { hour12: false });
@@ -426,6 +550,8 @@ INDEX_HTML = """<!doctype html>
       }
     }
 
+    taskToggle.addEventListener("change", () => applyTaskVisibility(taskToggle.checked));
+    applyTaskVisibility(localStorage.getItem("codex-status-show-task") !== "0", false);
     refresh();
     setInterval(refresh, 3000);
   </script>
@@ -497,6 +623,23 @@ def compact_title(*candidates):
     return "Codex task"
 
 
+def query_sidebar_title(thread_id):
+    if not thread_id or not SESSION_INDEX.exists():
+        return None
+    title = None
+    try:
+        for line in recent_lines(SESSION_INDEX, max_bytes=5_000_000):
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if item.get("id") == thread_id and item.get("thread_name"):
+                title = item["thread_name"]
+    except OSError:
+        return None
+    return title
+
+
 def query_current_thread():
     if not STATE_DB.exists():
         return None
@@ -534,6 +677,7 @@ def query_current_thread():
         data["updated_epoch"] = updated_epoch
         data["updated_relative"] = relative_time(updated_epoch)
         data["preview"] = shorten(data.get("preview"), 240)
+        data["sidebar_title"] = query_sidebar_title(data.get("id"))
         return data
 
 
@@ -551,6 +695,37 @@ def query_goal(thread_id):
             (thread_id,),
         ).fetchone()
         return dict(row) if row else None
+
+
+def query_active_account():
+    if not ACCOUNTS_REGISTRY.exists():
+        return None
+    try:
+        registry = json.loads(ACCOUNTS_REGISTRY.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    items = registry.get("items") or []
+    active_key = registry.get("activeAccountKey")
+    account = None
+    for item in items:
+        if item.get("accountKey") == active_key:
+            account = item
+            break
+    if account is None and items:
+        account = items[0]
+    if not isinstance(account, dict):
+        return None
+
+    return {
+        "email": account.get("email"),
+        "profile_name": account.get("profileName"),
+        "account_name": account.get("accountName"),
+        "workspace_name": account.get("workspaceName"),
+        "plan": account.get("plan"),
+        "auth_mode": account.get("authMode"),
+        "has_active_subscription": account.get("hasActiveSubscription"),
+    }
 
 
 def content_text(content):
@@ -748,9 +923,11 @@ def build_status():
             "tokens_used",
             "updated_relative",
             "preview",
+            "sidebar_title",
         ]
     }
     public_thread["display_title"] = compact_title(
+        (thread.get("sidebar_title"), True),
         (thread.get("title"), False),
         (rollout.get("latest_user_message"), True),
         (thread.get("preview"), True),
@@ -761,6 +938,7 @@ def build_status():
         "tailscale_ip": tailscale_ip(),
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "state": state,
+        "account": query_active_account(),
         "thread": public_thread,
         "goal": goal,
         "latest_user_message": rollout.get("latest_user_message"),
