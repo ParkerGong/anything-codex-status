@@ -14,6 +14,7 @@ Remote display access depends on Tailscale. The Mac running Codex and the phone/
 - Shows 5h and weekly quota windows.
 - Uses the Codex sidebar-style short title for the current task.
 - Shows recent request and activity.
+- Shows a Codex pet status bubble when local pet assets exist under `~/.codex/pets`.
 - Provides a `Task` switch for an account-and-quota-only view.
 - Uses Tailscale for phone/tablet dashboards.
 
@@ -38,6 +39,12 @@ cd anything-codex-status
 CODEX_STATUS_WORKSPACE="/path/to/workspace" CODEX_STATUS_PORT=8765 python3 -m anything_codex_status.server
 ```
 
+For localhost-only development checks, add:
+
+```bash
+CODEX_STATUS_HOST=127.0.0.1
+```
+
 Open:
 
 ```text
@@ -47,4 +54,4 @@ http://<mac-tailscale-ip>:8765/
 
 ## Security
 
-The dashboard is unauthenticated and may display account email, local paths, task titles, prompt snippets, and quota information. Use localhost for local checks or Tailscale for remote display access. Browser refreshes read local files and do not consume Codex tokens.
+The dashboard is unauthenticated and may display account email, local paths, task titles, prompt snippets, quota information, and local Codex pet assets. Use localhost for local checks or Tailscale for remote display access. Browser refreshes read local files and do not consume Codex tokens.
