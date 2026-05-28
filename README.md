@@ -10,7 +10,15 @@
 
 > 开始前请先确认：你准备用作监控屏的 iOS 或 Android 手机/平板必须能安装并登录 Tailscale。不能安装或无法登录 Tailscale 的设备，不适合作为这个项目的展示设备。
 
-[核心亮点](#核心亮点) • [功能说明](#功能说明) • [使用前提：需要 Tailscale](#使用前提需要-tailscale) • [用户必须操作的步骤](#用户必须手动操作的步骤) • [交给 Codex 安装](#交给-codex-安装) • [手动安装](#手动安装) • [部署为后台服务](#部署为后台服务) • [安全说明](#安全说明) • [开发与测试](#开发与测试)
+[界面预览](#界面预览) • [核心亮点](#核心亮点) • [功能说明](#功能说明) • [使用前提：需要 Tailscale](#使用前提需要-tailscale) • [用户必须操作的步骤](#用户必须手动操作的步骤) • [交给 Codex 安装](#交给-codex-安装) • [手动安装](#手动安装) • [部署为后台服务](#部署为后台服务) • [安全说明](#安全说明) • [开发与测试](#开发与测试)
+
+---
+
+## 界面预览
+
+下图使用脱敏示例数据生成，真实使用时会显示你本机 Codex 的账号、任务、额度、最近活动和当前桌宠。
+
+![Anything Codex Status dashboard preview](docs/assets/dashboard-preview.jpg)
 
 ---
 
@@ -21,7 +29,9 @@ Anything Codex Status 不是 Codex 的替代品，也不会接管你的任务。
 - 闲置设备变监控屏：能安装 Tailscale 的 iPhone、iPad、Android 手机、Android 平板都可以用。
 - 当前任务一眼可见：使用 Codex 左侧栏同款短标题，避免长 prompt 撑满页面。
 - 额度实时展示：显示 5h 额度、周额度、重置倒计时和当前套餐。
-- 隐私模式：关闭页面右上角 `Task` 开关后，只显示账号、套餐和额度，不显示任务内容。
+- 桌宠状态气泡：跟随 Codex 桌面端当前选择的桌宠；官方内置桌宠从本机 Codex.app 运行时读取，自定义桌宠从 `~/.codex/pets` 读取。
+- 桌宠开关：页面右上角 `Pet` 开关可以随时隐藏或显示桌宠，不影响状态数据刷新。
+- 隐私模式：关闭页面右上角 `Task` 开关后，只显示账号、套餐和额度，不显示任务内容；桌宠气泡也会隐藏任务文本。
 - Tailscale 优先：展示设备和运行 Codex 的电脑加入同一个 tailnet 后，用电脑的 `100.x.y.z` 地址访问。
 - Codex 可部署：新机器上把仓库链接交给 Codex，它可以边解释边检查环境，并协助部署。
 
@@ -39,6 +49,8 @@ Anything Codex Status 不是 Codex 的替代品，也不会接管你的任务。
 - 最近请求：显示最近一次用户请求摘要。
 - 最近活动：合并重复日志，显示工具调用、Codex 回复、额度采样等。
 - 运行状态：根据最近用户消息、最终回复和最新事件判断 `RUNNING` / `READY`。
+- 桌宠：读取 `~/.codex/config.toml` 的 `[desktop].selected-avatar-id`，优先显示 Codex 当前选择；官方内置 spritesheet 从已安装的 Codex.app 读取，自定义 spritesheet 从 `~/.codex/pets/<pet-id>/pet.json` 声明读取，并根据运行状态切换动画。
+- 页面开关：`Pet` 控制桌宠显示；`Task` 控制任务详情显示，适合在公开场合或共享屏幕时临时隐藏 prompt 摘要和活动文本。
 
 ---
 
@@ -156,6 +168,12 @@ CODEX_STATUS_PORT=8765 \
 python3 -m anything_codex_status.server
 ```
 
+如果只做本机开发验证，不希望临时服务监听 Tailscale 或局域网地址，可以额外指定：
+
+```bash
+CODEX_STATUS_HOST=127.0.0.1
+```
+
 Windows PowerShell：
 
 ```powershell
@@ -269,6 +287,10 @@ Use $anything-codex-status to start or repair my Codex phone/tablet status dashb
 - `~/.codex/goals_1.sqlite`
 - `~/.codex/session_index.jsonl`
 - `~/.codex/accounts/registry.json`
+- `~/.codex/config.toml`
+- `~/.codex/pets/*/pet.json`
+- `~/.codex/pets/*/spritesheet.webp`
+- `/Applications/Codex.app/Contents/Resources/app.asar` 中的官方桌宠 spritesheet
 - 当前会话的 `rollout-*.jsonl`
 
 请注意：
@@ -276,7 +298,9 @@ Use $anything-codex-status to start or repair my Codex phone/tablet status dashb
 - 状态页没有登录认证。
 - 不建议暴露到公网。
 - 推荐只在 localhost 或 Tailscale 私有网络里使用。
-- 页面可能显示账号邮箱、本机路径、任务标题、prompt 摘要和额度信息。
+- 页面可能显示账号邮箱、本机路径、任务标题、prompt 摘要、最近活动、模型信息、token 使用量和额度信息。
+- 如果启用 `Pet` 开关，页面会显示本机 Codex pet 动画；官方桌宠来自已安装的 Codex.app，自定义桌宠来自 `~/.codex/pets`。
+- `Pet` 开关只控制桌宠可见性，不会停止 `/api/status` 刷新；`Task` 开关会隐藏任务面板、最近活动和桌宠气泡里的任务文本。
 - 浏览器每 3 秒刷新一次 `/api/status`，这不会消耗 Codex token，只会产生很轻的本机文件读取和网络流量。
 
 ---

@@ -2,14 +2,22 @@
 import json
 import os
 import sqlite3
+import struct
 import time
 from datetime import datetime, timezone
+from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, unquote, urlparse
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 fallback
+    tomllib = None
 
 
 PORT = int(os.environ.get("CODEX_STATUS_PORT", "8765"))
+HOST = os.environ.get("CODEX_STATUS_HOST", "0.0.0.0")
 CODEX_HOME = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
 WORKSPACE_ENV = os.environ.get("CODEX_STATUS_WORKSPACE")
 WORKSPACE = Path(WORKSPACE_ENV).expanduser().resolve() if WORKSPACE_ENV else Path.cwd().resolve()
@@ -17,7 +25,85 @@ STATE_DB = CODEX_HOME / "state_5.sqlite"
 GOALS_DB = CODEX_HOME / "goals_1.sqlite"
 ACCOUNTS_REGISTRY = CODEX_HOME / "accounts" / "registry.json"
 SESSION_INDEX = CODEX_HOME / "session_index.jsonl"
+PETS_DIR = CODEX_HOME / "pets"
+CODEX_CONFIG = CODEX_HOME / "config.toml"
+CODEX_GLOBAL_STATE = CODEX_HOME / ".codex-global-state.json"
+CODEX_APP = Path(os.environ.get("CODEX_STATUS_CODEX_APP", "/Applications/Codex.app"))
+CODEX_APP_ASAR = CODEX_APP / "Contents" / "Resources" / "app.asar"
+PET_FRAME_WIDTH = 192
+PET_FRAME_HEIGHT = 208
+PET_FRAMES_PER_ROW = 8
+PET_STATES = [
+    "idle",
+    "running-right",
+    "running-left",
+    "waving",
+    "jumping",
+    "failed",
+    "waiting",
+    "running",
+    "review",
+]
 FINAL_PHASES = {"final", "final_answer"}
+OFFICIAL_PET_ASSETS = [
+    {
+        "id": "codex",
+        "asset_ref": "codex",
+        "display_name": "Codex",
+        "description": "The original Codex companion.",
+        "spritesheet_path": "webview/assets/codex-spritesheet-v4-Bl6P89d_.webp",
+    },
+    {
+        "id": "dewey",
+        "asset_ref": "dewey",
+        "display_name": "Dewey",
+        "description": "A tidy duck for calm workspace days.",
+        "spritesheet_path": "webview/assets/dewey-spritesheet-v4-gAYk_M9g.webp",
+    },
+    {
+        "id": "fireball",
+        "asset_ref": "fireball",
+        "display_name": "Fireball",
+        "description": "Hot path energy for fast iteration.",
+        "spritesheet_path": "webview/assets/fireball-spritesheet-v4-BtU8R9Qp.webp",
+    },
+    {
+        "id": "rocky",
+        "asset_ref": "rocky",
+        "display_name": "Rocky",
+        "description": "A steady rock when the diff gets large.",
+        "spritesheet_path": "webview/assets/rocky-spritesheet-v4-3RlTi26B.webp",
+    },
+    {
+        "id": "seedy",
+        "asset_ref": "seedy",
+        "display_name": "Seedy",
+        "description": "Small green shoots for new ideas.",
+        "spritesheet_path": "webview/assets/seedy-spritesheet-v4-CdlE_fn9.webp",
+    },
+    {
+        "id": "stacky",
+        "asset_ref": "stacky",
+        "display_name": "Stacky",
+        "description": "A balanced stack for deep work.",
+        "spritesheet_path": "webview/assets/stacky-spritesheet-v4-CaUJd4fY.webp",
+    },
+    {
+        "id": "bsod",
+        "asset_ref": "bsod",
+        "display_name": "BSOD",
+        "description": "A compact blue-screen companion.",
+        "spritesheet_path": "webview/assets/bsod-spritesheet-v4-BRrRVy1T.webp",
+    },
+    {
+        "id": "null-signal",
+        "asset_ref": "null-signal",
+        "display_name": "Null Signal",
+        "description": "Quiet signal from the void.",
+        "spritesheet_path": "webview/assets/null-signal-spritesheet-v4-CCoTR-8t.webp",
+    },
+]
+OFFICIAL_PET_ASSETS_BY_ID = {item["id"]: item for item in OFFICIAL_PET_ASSETS}
 
 
 INDEX_HTML = """<!doctype html>
@@ -346,6 +432,116 @@ INDEX_HTML = """<!doctype html>
       padding-top: 2px;
     }
 
+    .pet-dock {
+      position: fixed;
+      right: max(12px, env(safe-area-inset-right));
+      bottom: max(10px, env(safe-area-inset-bottom));
+      z-index: 20;
+      display: flex;
+      align-items: flex-end;
+      justify-content: flex-end;
+      gap: 9px;
+      max-width: min(430px, calc(100vw - 24px));
+      pointer-events: none;
+    }
+
+    .pet-dock[hidden] { display: none; }
+
+    .pet-bubble {
+      position: relative;
+      width: min(260px, calc(100vw - 154px));
+      margin-bottom: 24px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.92);
+      box-shadow: var(--shadow);
+      color: var(--ink);
+    }
+
+    .pet-bubble::after {
+      content: "";
+      position: absolute;
+      width: 12px;
+      height: 12px;
+      right: -7px;
+      bottom: 18px;
+      border-right: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.92);
+      transform: rotate(-45deg);
+    }
+
+    .pet-bubble-top {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-width: 0;
+      font-size: 12px;
+      font-weight: 820;
+    }
+
+    .pet-spinner {
+      width: 12px;
+      height: 12px;
+      flex: 0 0 auto;
+      border: 2px solid var(--ok);
+      border-radius: 50%;
+      animation: none;
+    }
+
+    .pet-spinner.busy {
+      border-color: rgba(13, 141, 125, 0.22);
+      border-top-color: var(--accent);
+      animation: pet-spin 840ms linear infinite;
+    }
+
+    .pet-spinner.failed {
+      border-color: var(--bad);
+    }
+
+    .pet-bubble-title {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .pet-bubble-text {
+      margin-top: 5px;
+      color: #303937;
+      font-size: 12px;
+      line-height: 1.32;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      overflow-wrap: anywhere;
+    }
+
+    .pet-stage {
+      --pet-scale: 0.58;
+      width: calc(192px * var(--pet-scale));
+      height: calc(208px * var(--pet-scale));
+      overflow: hidden;
+      flex: 0 0 auto;
+      filter: drop-shadow(0 12px 18px rgba(23, 27, 29, 0.22));
+    }
+
+    .pet-sprite {
+      width: 192px;
+      height: 208px;
+      background-repeat: no-repeat;
+      background-size: 1536px 1872px;
+      image-rendering: auto;
+      transform: scale(var(--pet-scale));
+      transform-origin: top left;
+    }
+
+    @keyframes pet-spin {
+      to { transform: rotate(360deg); }
+    }
+
     body.compact-mode .subtitle,
     body.compact-mode .task-panel,
     body.compact-mode .runtime-panel,
@@ -376,12 +572,16 @@ INDEX_HTML = """<!doctype html>
       .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .tokens { grid-template-columns: repeat(3, minmax(0, 1fr)); }
       .log { max-height: 88px; }
+      .pet-dock { max-width: 330px; }
+      .pet-bubble { width: min(210px, calc(100vw - 138px)); margin-bottom: 16px; }
+      .pet-stage { --pet-scale: 0.48; }
     }
 
     @media (min-width: 760px) {
       .shell { padding: 24px; }
       .grid { grid-template-columns: 1.1fr 0.9fr; }
       .headline { font-size: 28px; }
+      .pet-stage { --pet-scale: 0.68; }
     }
   </style>
 </head>
@@ -393,6 +593,11 @@ INDEX_HTML = """<!doctype html>
         <div class="subtitle" id="subtitle">Loading local thread...</div>
       </div>
       <div class="top-actions">
+        <label class="switch" title="Show pet">
+          <input type="checkbox" id="showPetToggle" checked>
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+          <span>Pet</span>
+        </label>
         <label class="switch" title="Show recent task">
           <input type="checkbox" id="showTaskToggle" checked>
           <span class="switch-track"><span class="switch-thumb"></span></span>
@@ -464,6 +669,19 @@ INDEX_HTML = """<!doctype html>
       <span id="server">local</span>
       <span id="clock">--</span>
     </footer>
+
+    <div class="pet-dock" id="petDock" hidden>
+      <div class="pet-bubble" id="petBubble">
+        <div class="pet-bubble-top">
+          <span class="pet-spinner" id="petSpinner"></span>
+          <span class="pet-bubble-title" id="petBubbleTitle">SYNC</span>
+        </div>
+        <div class="pet-bubble-text" id="petBubbleText">Loading pet...</div>
+      </div>
+      <div class="pet-stage" aria-hidden="true">
+        <div class="pet-sprite" id="petSprite"></div>
+      </div>
+    </div>
   </main>
 
   <script>
@@ -471,12 +689,51 @@ INDEX_HTML = """<!doctype html>
     const fmt = new Intl.NumberFormat("en-US");
     const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
     const taskToggle = $("showTaskToggle");
+    const petToggle = $("showPetToggle");
+    const petRows = {
+      idle: 0,
+      "running-right": 1,
+      "running-left": 2,
+      waving: 3,
+      jumping: 4,
+      failed: 5,
+      waiting: 6,
+      running: 7,
+      review: 8,
+    };
+    const pet = {
+      id: null,
+      ready: false,
+      loading: false,
+      frame: 0,
+      row: petRows.idle,
+      state: "idle",
+      timer: null,
+      frameWidth: 192,
+      frameHeight: 208,
+      framesPerRow: 8,
+      frameCounts: Array(9).fill(8),
+      spritesheetUrl: null,
+      imageLoaded: false,
+      imageRetry: 0,
+      lastPetCheck: 0,
+    };
+    let lastStatusData = null;
 
     function applyTaskVisibility(showTask, persist = true) {
       document.body.classList.toggle("compact-mode", !showTask);
       taskToggle.checked = showTask;
       if (persist) {
         localStorage.setItem("codex-status-show-task", showTask ? "1" : "0");
+      }
+      if (lastStatusData) updatePet(lastStatusData);
+    }
+
+    function applyPetVisibility(showPet, persist = true) {
+      petToggle.checked = showPet;
+      $("petDock").hidden = !showPet || !pet.ready;
+      if (persist) {
+        localStorage.setItem("codex-status-show-pet", showPet ? "1" : "0");
       }
     }
 
@@ -508,10 +765,195 @@ INDEX_HTML = """<!doctype html>
       return text(ratePlan || accountPlan);
     }
 
+    function drawPetFrame() {
+      const count = currentPetFrameCount();
+      if (pet.frame >= count) pet.frame = 0;
+      $("petSprite").style.backgroundPosition =
+        `${pet.frame * -pet.frameWidth}px ${pet.row * -pet.frameHeight}px`;
+    }
+
+    function currentPetFrameCount() {
+      return Math.max(1, pet.frameCounts[pet.row] || pet.framesPerRow || 1);
+    }
+
+    function startPetAnimation() {
+      if (pet.timer) return;
+      pet.timer = setInterval(() => {
+        pet.frame = (pet.frame + 1) % currentPetFrameCount();
+        drawPetFrame();
+      }, 130);
+    }
+
+    function loadImage(url) {
+      return new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = reject;
+        image.src = url;
+      });
+    }
+
+    function cacheBustedPetUrl(url) {
+      const separator = url.includes("?") ? "&" : "?";
+      return `${url}${separator}r=${Date.now()}`;
+    }
+
+    function setPetBackground(url, retry = false) {
+      const displayUrl = retry ? cacheBustedPetUrl(url) : url;
+      $("petSprite").style.backgroundImage = `url("${displayUrl}")`;
+      loadImage(displayUrl)
+        .then((image) => {
+          if (pet.spritesheetUrl !== url) return;
+          pet.imageLoaded = true;
+          pet.frameCounts = detectPetFrameCounts(image);
+          drawPetFrame();
+        })
+        .catch(() => {
+          if (pet.spritesheetUrl !== url) return;
+          pet.imageLoaded = false;
+        });
+    }
+
+    function detectPetFrameCounts(image) {
+      const rows = Math.max(1, Math.floor(image.naturalHeight / pet.frameHeight));
+      const cols = Math.max(1, Math.floor(image.naturalWidth / pet.frameWidth));
+      const fallback = Array(rows).fill(cols);
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = image.naturalWidth;
+        canvas.height = image.naturalHeight;
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        if (!ctx) return fallback;
+        ctx.drawImage(image, 0, 0);
+        return Array.from({ length: rows }, (_, row) => {
+          for (let col = cols - 1; col >= 0; col -= 1) {
+            const pixels = ctx.getImageData(
+              col * pet.frameWidth,
+              row * pet.frameHeight,
+              pet.frameWidth,
+              pet.frameHeight
+            ).data;
+            for (let offset = 3; offset < pixels.length; offset += 4) {
+              if (pixels[offset] > 8) return col + 1;
+            }
+          }
+          return 1;
+        });
+      } catch (error) {
+        return fallback;
+      }
+    }
+
+    async function loadPets(force = false) {
+      if (pet.loading) return;
+      pet.loading = true;
+      pet.lastPetCheck = Date.now();
+      try {
+        const res = await fetch("/api/pets", { cache: "no-store" });
+        const data = await res.json();
+        const selected = (data.pets || []).find((item) => item.id === data.selected) || data.pets?.[0];
+        if (!selected?.spritesheet_url) {
+          pet.ready = false;
+          $("petDock").hidden = true;
+          return;
+        }
+        if (
+          !force &&
+          pet.id === selected.id &&
+          pet.spritesheetUrl === selected.spritesheet_url
+        ) {
+          if (!pet.imageLoaded && pet.imageRetry < 3) {
+            pet.imageRetry += 1;
+            setPetBackground(selected.spritesheet_url, true);
+          }
+          return;
+        }
+        pet.frameWidth = selected.frame_width || 192;
+        pet.frameHeight = selected.frame_height || 208;
+        pet.framesPerRow = selected.frames_per_row || 8;
+        pet.id = selected.id;
+        pet.spritesheetUrl = selected.spritesheet_url;
+        pet.imageLoaded = false;
+        pet.imageRetry = 0;
+        pet.frameCounts = Array(9).fill(pet.framesPerRow || 8);
+        pet.ready = true;
+        pet.frame = 0;
+        pet.row = petRows[pet.state] ?? petRows.idle;
+        setPetBackground(selected.spritesheet_url);
+        drawPetFrame();
+        startPetAnimation();
+        applyPetVisibility(localStorage.getItem("codex-status-show-pet") !== "0", false);
+        if (lastStatusData) updatePet(lastStatusData);
+      } catch (error) {
+        if (!pet.ready) {
+          $("petDock").hidden = true;
+        }
+      } finally {
+        pet.loading = false;
+      }
+    }
+
+    function maybeRefreshPets() {
+      if (Date.now() - pet.lastPetCheck > 10000) {
+        loadPets();
+      }
+    }
+
+    function statusToPetState(data) {
+      const state = data?.state || {};
+      if (state.kind === "failed" || state.label === "OFFLINE") return "failed";
+      if (state.kind === "running" || state.label === "LIVE") return "running";
+      if (state.kind === "ready" || state.label === "READY") return "idle";
+      const activity = data?.activity || [];
+      const latest = activity.length ? activity[activity.length - 1] : "";
+      if (latest.includes("TOOL start")) return "running";
+      if (latest.includes("USER ")) return "review";
+      return "idle";
+    }
+
+    function petSpinnerClass(data, nextState) {
+      const state = data?.state || {};
+      if (nextState === "failed") return "pet-spinner failed";
+      if (state.kind === "running" || state.label === "LIVE" || nextState === "running") {
+        return "pet-spinner busy";
+      }
+      return "pet-spinner idle";
+    }
+
+    function latestActivityText(data) {
+      if (!taskToggle.checked) return "";
+      const activity = data?.activity || [];
+      const latest = activity.length ? activity[activity.length - 1] : "";
+      return latest || data?.latest_user_message || data?.thread?.display_title || "";
+    }
+
+    function updatePet(data) {
+      lastStatusData = data;
+      if (!pet.ready) return;
+      const nextState = statusToPetState(data);
+      const previousRow = pet.row;
+      const previousState = pet.state;
+      pet.state = nextState;
+      pet.row = petRows[nextState] ?? petRows.idle;
+      if (previousState !== nextState || previousRow !== pet.row || pet.frame >= currentPetFrameCount()) {
+        pet.frame = 0;
+      }
+      drawPetFrame();
+
+      const stateLabel = data?.state?.label || "SYNC";
+      const title = data?.thread?.display_title || "Codex Status";
+      $("petSpinner").className = petSpinnerClass(data, nextState);
+      $("petBubbleTitle").textContent = taskToggle.checked ? `${stateLabel} · ${title}` : stateLabel;
+      $("petBubbleText").textContent = latestActivityText(data);
+      $("petBubble").hidden = !taskToggle.checked;
+      applyPetVisibility(petToggle.checked, false);
+    }
+
     async function refresh() {
       try {
         const res = await fetch("/api/status", { cache: "no-store" });
         const data = await res.json();
+        lastStatusData = data;
         const thread = data.thread || {};
         const usage = data.usage || {};
         const rate = usage.rate_limits || {};
@@ -544,15 +986,25 @@ INDEX_HTML = """<!doctype html>
         $("activity").textContent = (data.activity || []).join("\\n") || "--";
         $("server").textContent = text(data.server);
         $("clock").textContent = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+        updatePet(data);
+        maybeRefreshPets();
       } catch (error) {
         $("stateText").textContent = "OFFLINE";
         $("dot").className = "dot";
         $("activity").textContent = error.message;
+        updatePet({
+          state: { kind: "failed", label: "OFFLINE" },
+          thread: { display_title: "Codex Status" },
+          activity: [error.message],
+        });
       }
     }
 
     taskToggle.addEventListener("change", () => applyTaskVisibility(taskToggle.checked));
+    petToggle.addEventListener("change", () => applyPetVisibility(petToggle.checked));
     applyTaskVisibility(localStorage.getItem("codex-status-show-task") !== "0", false);
+    applyPetVisibility(localStorage.getItem("codex-status-show-pet") !== "0", false);
+    loadPets();
     refresh();
     setInterval(refresh, 3000);
   </script>
@@ -652,6 +1104,8 @@ def query_current_thread():
                    updated_at, preview, rollout_path
             FROM threads
             WHERE cwd = ?
+              AND archived = 0
+              AND COALESCE(thread_source, '') != 'subagent'
             ORDER BY updated_at_ms DESC, updated_at DESC
             LIMIT 1
             """,
@@ -663,6 +1117,8 @@ def query_current_thread():
                 SELECT id, title, cwd, model, reasoning_effort, tokens_used, updated_at_ms,
                        updated_at, preview, rollout_path
                 FROM threads
+                WHERE archived = 0
+                  AND COALESCE(thread_source, '') != 'subagent'
                 ORDER BY updated_at_ms DESC, updated_at DESC
                 LIMIT 1
                 """
@@ -727,6 +1183,291 @@ def query_active_account():
         "auth_mode": account.get("authMode"),
         "has_active_subscription": account.get("hasActiveSubscription"),
     }
+
+
+def quote_pet_id(pet_id):
+    return quote(pet_id, safe="")
+
+
+def resolve_pet_dir(pet_id):
+    if isinstance(pet_id, str) and pet_id.startswith("custom:"):
+        pet_id = pet_id.split(":", 1)[1]
+    if not pet_id or pet_id in {".", ".."} or "/" in pet_id or "\\" in pet_id:
+        return None
+    try:
+        root = PETS_DIR.resolve()
+        candidate = (PETS_DIR / pet_id).resolve()
+        candidate.relative_to(root)
+    except (OSError, ValueError):
+        return None
+    return candidate if candidate.is_dir() else None
+
+
+def load_pet_manifest(pet_dir):
+    manifest_path = pet_dir / "pet.json"
+    if not manifest_path.is_file():
+        return None
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return manifest if isinstance(manifest, dict) else None
+
+
+def resolve_pet_spritesheet(pet_dir, manifest):
+    spritesheet = manifest.get("spritesheetPath")
+    if not spritesheet or Path(str(spritesheet)).is_absolute():
+        return None
+    try:
+        root = pet_dir.resolve()
+        image_path = (pet_dir / str(spritesheet)).resolve()
+        image_path.relative_to(root)
+    except (OSError, ValueError):
+        return None
+    return image_path if image_path.is_file() else None
+
+
+def pet_state_map():
+    return {name: index for index, name in enumerate(PET_STATES)}
+
+
+def public_pet_package(pet_dir):
+    manifest = load_pet_manifest(pet_dir)
+    if not manifest:
+        return None
+    spritesheet = resolve_pet_spritesheet(pet_dir, manifest)
+    if not spritesheet:
+        return None
+    pet_id = f"custom:{pet_dir.name}"
+    return {
+        "id": pet_id,
+        "asset_ref": "codex",
+        "source": "custom",
+        "local_id": pet_dir.name,
+        "display_name": manifest.get("displayName") or manifest.get("display_name") or pet_id,
+        "description": manifest.get("description"),
+        "kind": manifest.get("kind"),
+        "spritesheet_url": f"/pets/{quote_pet_id(pet_id)}/spritesheet.webp",
+        "frame_width": PET_FRAME_WIDTH,
+        "frame_height": PET_FRAME_HEIGHT,
+        "frames_per_row": PET_FRAMES_PER_ROW,
+        "states": pet_state_map(),
+    }
+
+
+@lru_cache(maxsize=4)
+def load_asar_header(asar_path):
+    path = Path(asar_path)
+    with path.open("rb") as handle:
+        raw_header = handle.read(16)
+        if len(raw_header) != 16:
+            return None
+        _, packed_size, _, header_size = struct.unpack("<IIII", raw_header)
+        header_bytes = handle.read(header_size)
+    try:
+        header = json.loads(header_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return {"base_offset": 8 + packed_size, "header": header}
+
+
+def asar_entry(header, relative_path):
+    node = header
+    for part in relative_path.split("/"):
+        files = node.get("files") if isinstance(node, dict) else None
+        if not isinstance(files, dict) or part not in files:
+            return None
+        node = files[part]
+    return node if isinstance(node, dict) else None
+
+
+def iter_asar_file_paths(node, prefix=""):
+    files = node.get("files") if isinstance(node, dict) else None
+    if not isinstance(files, dict):
+        return
+    for name, child in sorted(files.items()):
+        relative_path = f"{prefix}/{name}" if prefix else name
+        child_files = child.get("files") if isinstance(child, dict) else None
+        if isinstance(child_files, dict):
+            yield from iter_asar_file_paths(child, relative_path)
+        else:
+            yield relative_path
+
+
+def read_asar_file(asar_path, relative_path):
+    try:
+        archive = load_asar_header(str(asar_path))
+        if not archive:
+            return None
+        entry = asar_entry(archive["header"], relative_path)
+        if not entry or entry.get("unpacked"):
+            return None
+        size = int(entry.get("size"))
+        offset = int(entry.get("offset"))
+        with Path(asar_path).open("rb") as handle:
+            handle.seek(archive["base_offset"] + offset)
+            return handle.read(size)
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def asar_has_file(asar_path, relative_path):
+    try:
+        archive = load_asar_header(str(asar_path))
+        return bool(archive and asar_entry(archive["header"], relative_path))
+    except OSError:
+        return False
+
+
+@lru_cache(maxsize=8)
+def official_spritesheet_paths(asar_path):
+    archive = load_asar_header(str(asar_path))
+    if not archive:
+        return {}
+    prefixes = {
+        asset["id"]: f"{asset['id']}-spritesheet-"
+        for asset in OFFICIAL_PET_ASSETS
+    }
+    found = {}
+    for relative_path in iter_asar_file_paths(archive["header"]):
+        if not relative_path.startswith("webview/assets/") or not relative_path.endswith(".webp"):
+            continue
+        filename = relative_path.rsplit("/", 1)[-1]
+        for pet_id, prefix in prefixes.items():
+            if filename.startswith(prefix):
+                found.setdefault(pet_id, relative_path)
+                break
+    return found
+
+
+def official_spritesheet_path(asset):
+    explicit_path = asset.get("spritesheet_path")
+    if explicit_path and asar_has_file(CODEX_APP_ASAR, explicit_path):
+        return explicit_path
+    return official_spritesheet_paths(str(CODEX_APP_ASAR)).get(asset["id"])
+
+
+def official_pet_package(asset):
+    if not official_spritesheet_path(asset):
+        return None
+    pet_id = asset["id"]
+    return {
+        "id": pet_id,
+        "asset_ref": asset["asset_ref"],
+        "source": "official",
+        "display_name": asset["display_name"],
+        "description": asset["description"],
+        "kind": "official",
+        "spritesheet_url": f"/pets/{quote_pet_id(pet_id)}/spritesheet.webp",
+        "frame_width": PET_FRAME_WIDTH,
+        "frame_height": PET_FRAME_HEIGHT,
+        "frames_per_row": PET_FRAMES_PER_ROW,
+        "states": pet_state_map(),
+    }
+
+
+def list_official_pet_packages():
+    if not CODEX_APP_ASAR.is_file():
+        return []
+    packages = []
+    for asset in OFFICIAL_PET_ASSETS:
+        package = official_pet_package(asset)
+        if package:
+            packages.append(package)
+    return packages
+
+
+def list_custom_pet_packages():
+    if not PETS_DIR.is_dir():
+        return []
+    packages = []
+    try:
+        pet_dirs = sorted(PETS_DIR.iterdir(), key=lambda item: item.name.lower())
+    except OSError:
+        return []
+    for pet_dir in pet_dirs:
+        resolved = resolve_pet_dir(pet_dir.name)
+        if not resolved:
+            continue
+        package = public_pet_package(resolved)
+        if package:
+            packages.append(package)
+    return packages
+
+
+def list_pet_packages():
+    return list_official_pet_packages() + list_custom_pet_packages()
+
+
+def read_selected_avatar_id_from_config():
+    if not CODEX_CONFIG.is_file() or tomllib is None:
+        return None
+    try:
+        config = tomllib.loads(CODEX_CONFIG.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    value = (config.get("desktop") or {}).get("selected-avatar-id")
+    return value if isinstance(value, str) and value else None
+
+
+def read_selected_avatar_id_from_global_state():
+    if not CODEX_GLOBAL_STATE.is_file():
+        return None
+    try:
+        state = json.loads(CODEX_GLOBAL_STATE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    atoms = state.get("electron-persisted-atom-state") or {}
+    value = atoms.get("selected-avatar-id")
+    return value if isinstance(value, str) and value else None
+
+
+def query_selected_avatar_id():
+    override = os.environ.get("CODEX_STATUS_PET_ID")
+    if override:
+        return override
+    return read_selected_avatar_id_from_config() or read_selected_avatar_id_from_global_state()
+
+
+def selected_pet_package_id(packages):
+    if not packages:
+        return None
+    ids = {package["id"] for package in packages}
+    selected = query_selected_avatar_id()
+    candidates = []
+    if selected:
+        candidates.append(selected)
+        if selected.startswith("custom:"):
+            candidates.append(selected.split(":", 1)[1])
+        else:
+            candidates.append(f"custom:{selected}")
+    candidates.extend(["codex", packages[0]["id"]])
+    for candidate in candidates:
+        if candidate in ids:
+            return candidate
+    return packages[0]["id"]
+
+
+def read_pet_spritesheet(pet_id):
+    official_asset = OFFICIAL_PET_ASSETS_BY_ID.get(pet_id)
+    if official_asset:
+        spritesheet_path = official_spritesheet_path(official_asset)
+        if not spritesheet_path:
+            return None
+        return read_asar_file(CODEX_APP_ASAR, spritesheet_path)
+    pet_dir = resolve_pet_dir(pet_id)
+    if not pet_dir:
+        return None
+    manifest = load_pet_manifest(pet_dir)
+    if not manifest:
+        return None
+    spritesheet = resolve_pet_spritesheet(pet_dir, manifest)
+    if not spritesheet:
+        return None
+    try:
+        return spritesheet.read_bytes()
+    except OSError:
+        return None
 
 
 def content_text(content):
@@ -979,7 +1720,7 @@ def build_status():
         (thread.get("preview"), True),
     )
     return {
-        "server": f"Codex Status on :{PORT}",
+        "server": f"Codex Status on {HOST}:{PORT}",
         "workspace": str(WORKSPACE),
         "tailscale_ip": tailscale_ip(),
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -998,17 +1739,25 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         print(f"{self.client_address[0]} - {fmt % args}")
 
-    def send_headers(self, content_type, status=200, content_length=None):
+    def send_headers(self, content_type, status=200, content_length=None, cache_control="no-store"):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache_control)
         if content_length is not None:
             self.send_header("Content-Length", str(content_length))
         self.end_headers()
 
-    def send_bytes(self, body, content_type, status=200):
-        self.send_headers(content_type, status=status, content_length=len(body))
-        self.wfile.write(body)
+    def send_bytes(self, body, content_type, status=200, cache_control="no-store"):
+        self.send_headers(
+            content_type,
+            status=status,
+            content_length=len(body),
+            cache_control=cache_control,
+        )
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            return
 
     def do_GET(self):
         path = urlparse(self.path).path
@@ -1022,6 +1771,22 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 body = json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8")
                 self.send_bytes(body, "application/json; charset=utf-8", status=500)
+            return
+        if path == "/api/pets":
+            pets = list_pet_packages()
+            body = json.dumps(
+                {"pets": pets, "selected": selected_pet_package_id(pets)},
+                ensure_ascii=False,
+            ).encode("utf-8")
+            self.send_bytes(body, "application/json; charset=utf-8")
+            return
+        parts = path.split("/")
+        if len(parts) == 4 and parts[1] == "pets" and parts[3] == "spritesheet.webp":
+            image = read_pet_spritesheet(unquote(parts[2]))
+            if image is not None:
+                self.send_bytes(image, "image/webp", cache_control="private, max-age=3600")
+                return
+            self.send_bytes(b"Not found", "text/plain; charset=utf-8", status=404)
             return
         self.send_bytes(b"Not found", "text/plain; charset=utf-8", status=404)
 
@@ -1043,12 +1808,32 @@ class Handler(BaseHTTPRequestHandler):
                     content_length=len(body),
                 )
             return
+        if path == "/api/pets":
+            pets = list_pet_packages()
+            body = json.dumps(
+                {"pets": pets, "selected": selected_pet_package_id(pets)},
+                ensure_ascii=False,
+            ).encode("utf-8")
+            self.send_headers("application/json; charset=utf-8", content_length=len(body))
+            return
+        parts = path.split("/")
+        if len(parts) == 4 and parts[1] == "pets" and parts[3] == "spritesheet.webp":
+            image = read_pet_spritesheet(unquote(parts[2]))
+            if image is not None:
+                self.send_headers(
+                    "image/webp",
+                    content_length=len(image),
+                    cache_control="private, max-age=3600",
+                )
+                return
+            self.send_headers("text/plain; charset=utf-8", status=404, content_length=9)
+            return
         self.send_headers("text/plain; charset=utf-8", status=404, content_length=9)
 
 
 def main():
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    print(f"Codex status server: http://0.0.0.0:{PORT}/")
+    server = ThreadingHTTPServer((HOST, PORT), Handler)
+    print(f"Codex status server: http://{HOST}:{PORT}/")
     print(f"Workspace: {WORKSPACE}")
     server.serve_forever()
 

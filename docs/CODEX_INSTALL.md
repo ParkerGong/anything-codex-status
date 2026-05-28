@@ -9,6 +9,7 @@ Tell the user:
 - The dashboard is a local Python HTTP server.
 - It binds to `0.0.0.0` so phones or tablets on the same Tailscale network can reach it.
 - It reads local Codex state under `~/.codex`.
+- It follows the Codex desktop avatar selected in `~/.codex/config.toml`. Built-in Codex avatar spritesheets are read from the installed Codex app, and custom avatars are read from `~/.codex/pets`.
 - It does not call a model and does not consume Codex tokens.
 - It is unauthenticated, so it should stay on localhost for local checks or Tailscale for remote display access.
 
@@ -69,10 +70,13 @@ CODEX_STATUS_PORT=8765 \
 python3 -m anything_codex_status.server
 ```
 
+For localhost-only development checks, add `CODEX_STATUS_HOST=127.0.0.1`. The default remains `0.0.0.0` for phone/tablet access over Tailscale.
+
 Verify:
 
 ```bash
 curl http://127.0.0.1:8765/api/status
+curl http://127.0.0.1:8765/api/pets
 ```
 
 Give the user:

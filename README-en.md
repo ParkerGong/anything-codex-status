@@ -4,6 +4,12 @@ Turn an idle phone or tablet that can install and sign in to Tailscale into a pr
 
 The main README is written in Chinese first: [简体中文](README.md).
 
+## Preview
+
+This screenshot uses sanitized demo data. A real dashboard may show your local Codex account, workspace path, task text, quota data, recent activity, and selected pet.
+
+![Anything Codex Status dashboard preview](docs/assets/dashboard-preview.jpg)
+
 ## External Requirement
 
 Remote display access depends on Tailscale. The Mac running Codex and the phone/tablet used as the status screen must be in the same tailnet. Tailscale's open-source repository is [tailscale/tailscale](https://github.com/tailscale/tailscale).
@@ -14,7 +20,8 @@ Remote display access depends on Tailscale. The Mac running Codex and the phone/
 - Shows 5h and weekly quota windows.
 - Uses the Codex sidebar-style short title for the current task.
 - Shows recent request and activity.
-- Provides a `Task` switch for an account-and-quota-only view.
+- Shows a Codex pet status bubble that follows the avatar selected in Codex desktop. Built-in Codex avatars are read from the installed Codex app, and custom avatars are read from `~/.codex/pets`.
+- Provides a `Pet` switch for hiding/showing the pet and a `Task` switch for an account-and-quota-only view.
 - Uses Tailscale for phone/tablet dashboards.
 
 ## Recommended Install Flow
@@ -38,6 +45,12 @@ cd anything-codex-status
 CODEX_STATUS_WORKSPACE="/path/to/workspace" CODEX_STATUS_PORT=8765 python3 -m anything_codex_status.server
 ```
 
+For localhost-only development checks, add:
+
+```bash
+CODEX_STATUS_HOST=127.0.0.1
+```
+
 Open:
 
 ```text
@@ -47,4 +60,4 @@ http://<mac-tailscale-ip>:8765/
 
 ## Security
 
-The dashboard is unauthenticated and may display account email, local paths, task titles, prompt snippets, and quota information. Use localhost for local checks or Tailscale for remote display access. Browser refreshes read local files and do not consume Codex tokens.
+The dashboard is unauthenticated and may display account email, local paths, task titles, prompt snippets, recent activity, quota information, the selected Codex avatar setting from `~/.codex/config.toml`, built-in avatar spritesheets from the installed Codex app, and custom avatar assets from `~/.codex/pets`. Use localhost for local checks or Tailscale for remote display access. The `Pet` switch only controls pet visibility; the `Task` switch hides task text and recent activity. Browser refreshes read local files and do not consume Codex tokens.
