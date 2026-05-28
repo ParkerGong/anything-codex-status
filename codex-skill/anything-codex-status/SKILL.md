@@ -1,6 +1,6 @@
 ---
 name: anything-codex-status
-description: Build, start, repair, or persist a phone-friendly Codex status dashboard served from the Mac over local network or Tailscale. Use when the user asks to monitor current Codex task status, 5h quota, weekly quota, recent activity, iPhone/Kindle/e-ink status display, Tailscale status screen, or LaunchAgent persistence for the Codex status web page.
+description: Build, start, repair, or persist a phone-friendly Codex status dashboard served from the Mac over Tailscale. Use when the user asks to monitor current Codex task status, 5h quota, weekly quota, recent activity, iPhone/iPad/Android tablet status display, Tailscale status screen, or LaunchAgent persistence for the Codex status web page.
 ---
 
 # Anything Codex Status
@@ -18,7 +18,7 @@ Default behavior:
 - Monitors `CODEX_STATUS_WORKSPACE` when set, otherwise the process working directory.
 - Reads Codex state from `${CODEX_HOME:-~/.codex}/state_5.sqlite`, `goals_1.sqlite`, and the selected thread rollout JSONL.
 - Extracts real `5h` and weekly quota from rollout `token_count` events when available.
-- Works well through Tailscale; use the Mac `100.x.y.z` address on iPhone.
+- Requires Tailscale for remote display access; use the Mac `100.x.y.z` address on the phone or tablet.
 
 Start manually:
 
@@ -34,10 +34,10 @@ http://<mac-tailscale-ip>:8765/
 
 ## Workflow
 
-1. Confirm Tailscale connectivity if same-Wi-Fi direct access fails.
+1. Confirm Tailscale is installed and signed in on both the Mac and the display device.
 2. Start or restart `codex_status_server.py` on port `8765`.
 3. Visit `/api/status` locally with `curl` and verify `thread`, `usage.rate_limits.primary`, and `usage.rate_limits.secondary`.
-4. Open the Tailscale URL on iPhone Safari and optionally add it to the home screen.
+4. Open the Tailscale URL on the phone/tablet browser and optionally add it to the home screen.
 5. For persistence, install a LaunchAgent with `scripts/install_launch_agent.py`.
 
 ## Persistence
@@ -74,7 +74,7 @@ tail -n 50 ~/.codex/log/anything-codex-status.err.log
 
 ## Common Fixes
 
-- If iPhone cannot open the page on campus Wi-Fi, use Tailscale and open `http://100.x.y.z:8765/`.
+- If the phone/tablet cannot open the page, confirm Tailscale is connected and open `http://100.x.y.z:8765/`.
 - If `/api/status` works but the page looks stale, refresh Safari or restart the LaunchAgent.
 - If the service shows the wrong task, set `CODEX_STATUS_WORKSPACE` to the intended workspace or lock the selection logic to a specific thread id.
 - If the service cannot bind to the port, find the old process with `lsof -nP -iTCP:8765 -sTCP:LISTEN` and stop that process before restarting.

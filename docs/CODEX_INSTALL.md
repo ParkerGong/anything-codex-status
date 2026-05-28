@@ -7,10 +7,10 @@ This manual is written for Codex or another local coding agent reading the repos
 Tell the user:
 
 - The dashboard is a local Python HTTP server.
-- It binds to `0.0.0.0` so phones on a private network or Tailscale can reach it.
+- It binds to `0.0.0.0` so phones or tablets on the same Tailscale network can reach it.
 - It reads local Codex state under `~/.codex`.
 - It does not call a model and does not consume Codex tokens.
-- It is unauthenticated, so it should stay on localhost, LAN, or Tailscale.
+- It is unauthenticated, so it should stay on localhost for local checks or Tailscale for remote display access.
 
 ## 2. Check Requirements
 
@@ -24,7 +24,7 @@ test -f ~/.codex/session_index.jsonl && echo "session index found"
 lsof -nP -iTCP:8765 -sTCP:LISTEN
 ```
 
-If Tailscale is expected, find the Mac's Tailscale IP:
+Confirm Tailscale is installed and signed in on both the Mac and the display device. Then find the Mac's Tailscale IP:
 
 ```bash
 ifconfig | grep '100\.'
@@ -122,9 +122,9 @@ Use $anything-codex-status to start or repair my Codex phone status dashboard.
 
 ## Troubleshooting
 
-If the phone cannot connect:
+If the phone/tablet cannot connect:
 
-- Confirm the Mac and phone are both connected to Tailscale.
+- Confirm the Mac and phone/tablet are both connected to Tailscale.
 - Use the `100.x.y.z` address, not a campus Wi-Fi address.
 - Confirm `lsof -nP -iTCP:8765 -sTCP:LISTEN` shows the server.
 - Confirm macOS firewall or network settings are not blocking incoming connections.

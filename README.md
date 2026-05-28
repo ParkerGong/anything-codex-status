@@ -1,24 +1,40 @@
 # Anything Codex Status
 
-把你的闲置手机、平板、Kindle 浏览器或任意带浏览器的设备，变成一块 Codex 监控屏。
+把一台能安装并登录 Tailscale 的 iOS 或 Android 闲置手机/平板，变成一块 Codex 监控屏。
 
-它在 Mac 本机启动一个轻量网页，读取本地 Codex 状态，然后通过局域网或 Tailscale 显示当前任务、账号、套餐、5h 额度、周额度和最近活动。适合把旧 iPhone / iPad / Android 平板放在桌边，当作 Codex 的小副屏。
+它在运行 Codex 的电脑上启动一个轻量网页，读取本地 Codex 状态，然后通过 Tailscale 私有网络显示当前任务、账号、套餐、5h 额度、周额度和最近活动。iPhone、iPad、Android 手机、Android 平板都可以放在桌边，当作 Codex 的小副屏。
+
+无论你的 Codex 安装在 macOS、Windows 还是 Linux，只要运行 Codex 的电脑和 iOS/Android 展示设备都能联网、都能安装并登录 Tailscale，就不需要处在同一个无线网络里。两端加入同一个 tailnet 后，你可以把手机或平板放在任意有网络的位置，用它查看 Codex 当前状态和额度。
 
 [English](README-en.md) | 简体中文
 
-核心亮点 • 功能说明 • 交给 Codex 安装 • 手动安装 • 用户必须操作的步骤 • 部署为后台服务 • 安全说明 • 开发与测试
+> 开始前请先确认：你准备用作监控屏的 iOS 或 Android 手机/平板必须能安装并登录 Tailscale。不能安装或无法登录 Tailscale 的设备，不适合作为这个项目的展示设备。
+
+[使用前提：需要 Tailscale](#使用前提需要-tailscale) • [核心亮点](#核心亮点) • [功能说明](#功能说明) • [交给 Codex 安装](#交给-codex-安装) • [手动安装](#手动安装) • [用户必须操作的步骤](#用户必须手动操作的步骤) • [部署为后台服务](#部署为后台服务) • [安全说明](#安全说明) • [开发与测试](#开发与测试)
+
+---
+
+## 使用前提：需要 Tailscale
+
+这个项目的前提是：运行 Codex 的电脑和用作监控屏的设备都能安装并登录 Tailscale。Tailscale 官方下载页列出 macOS、iOS、Windows、Linux、Android 客户端；[tailscale/tailscale](https://github.com/tailscale/tailscale) 仓库也说明核心 daemon 支持 Linux、Windows、macOS，并对 FreeBSD/OpenBSD 有不同程度支持。
+
+- 运行 Codex 的电脑：可以是 macOS、Windows 或 Linux；它负责运行 Codex 和状态服务，并加入你的 Tailscale 网络。
+- 闲置手机/平板：iOS 和 Android 都可以；安装 Tailscale，登录同一个账号或同一个 tailnet，然后用浏览器打开运行 Codex 电脑的 `100.x.y.z` 地址。
+- 不能安装或不能登录 Tailscale 的设备，不作为这个项目的目标展示设备。
+
+本机调试可以使用 `http://127.0.0.1:8765/`，但真正把手机或平板变成监控屏时，推荐只通过 Tailscale 私有网络访问。
 
 ---
 
 ## 核心亮点
 
-Anything Codex Status 不是 Codex 的替代品，也不会接管你的任务。它只是把 Codex 已经写在本机的状态数据，整理成一个适合手机横屏、竖屏和轻量浏览器查看的状态页。
+Anything Codex Status 不是 Codex 的替代品，也不会接管你的任务。它只是把 Codex 已经写在本机的状态数据，整理成一个适合手机和平板横屏、竖屏查看的状态页。
 
-- 闲置设备变监控屏：旧手机、平板、Kindle 浏览器都可以用。
+- 闲置设备变监控屏：能安装 Tailscale 的 iPhone、iPad、Android 手机、Android 平板都可以用。
 - 当前任务一眼可见：使用 Codex 左侧栏同款短标题，避免长 prompt 撑满页面。
 - 额度实时展示：显示 5h 额度、周额度、重置倒计时和当前套餐。
 - 隐私模式：关闭页面右上角 `Task` 开关后，只显示账号、套餐和额度，不显示任务内容。
-- Tailscale 友好：校园网、公司 Wi-Fi、同网段不可直连时，也可以用 Tailscale 私有 IP 访问。
+- Tailscale 优先：展示设备和运行 Codex 的电脑加入同一个 tailnet 后，用电脑的 `100.x.y.z` 地址访问。
 - Codex 可部署：新机器上把仓库链接交给 Codex，它可以边解释边检查环境，并协助部署。
 
 ---
@@ -36,24 +52,6 @@ Anything Codex Status 不是 Codex 的替代品，也不会接管你的任务。
 - 最近活动：合并重复日志，显示工具调用、Codex 回复、额度采样等。
 - 运行状态：根据最近用户消息、最终回复和最新事件判断 `RUNNING` / `READY`。
 
-### 额度怎么更新
-
-网页每 3 秒请求一次本机的 `/api/status`。这个请求只读本地文件，不调用模型，不消耗 token。
-
-服务会读取当前 Codex 会话的 rollout 日志：
-
-```text
-~/.codex/sessions/.../rollout-*.jsonl
-```
-
-Codex 在对话和执行任务时会写入 `token_count` 事件。页面读取最新一条 `token_count`：
-
-- `rate_limits.primary` 显示为 5h 额度。
-- `rate_limits.secondary` 显示为周额度。
-- `rate_limits.plan_type` 用来校正套餐显示。
-
-如果长时间没有新的 `token_count`，额度百分比可能暂时保持旧值；重置倒计时会随着页面刷新重新计算。
-
 ---
 
 ## 交给 Codex 安装
@@ -62,7 +60,7 @@ Codex 在对话和执行任务时会写入 `token_count` 事件。页面读取�
 
 ```text
 请阅读这个仓库并帮我把 Anything Codex Status 部署到这台 Mac 上：
-<GITHUB_REPO_URL>
+https://github.com/ParkerGong/anything-codex-status
 
 请先解释它会读取哪些本地 Codex 数据，再检查 Python、Codex 本地状态和 Tailscale。
 先启动临时服务让我用手机测试；只有我明确同意后，才安装 LaunchAgent 后台服务。
@@ -86,14 +84,30 @@ Codex 可以参考这些文件：
 
 ## 手动安装
 
-### 1. 克隆仓库
+更推荐的方式仍然是把仓库链接交给 Codex，让它根据你的系统自动检查 Python、Codex 本地状态、Tailscale 和端口占用，再带着你部署。手动安装适合你想先理解每一步，或需要自己排查环境的时候使用。
+
+### 1. 确认双端 Tailscale 前提
+
+这个项目依赖外部组件 Tailscale。开始安装前，请先确认：
+
+- 运行 Codex 的电脑可以安装并登录 Tailscale。
+- 用作监控屏的 iOS/Android 手机或平板可以安装并登录 Tailscale。
+- 两端加入同一个 Tailscale 网络后，手机/平板可以访问运行 Codex 电脑的 `100.x.y.z` 地址。
+
+Tailscale 开源仓库：[tailscale/tailscale](https://github.com/tailscale/tailscale)
+
+如果展示设备不能安装或不能登录 Tailscale，它就不适合作为这个项目的监控屏。
+
+### 2. 克隆仓库
 
 ```bash
-git clone <GITHUB_REPO_URL>
+git clone https://github.com/ParkerGong/anything-codex-status.git
 cd anything-codex-status
 ```
 
-### 2. 检查环境
+### 3. 检查环境
+
+macOS / Linux：
 
 ```bash
 python3 --version
@@ -101,16 +115,34 @@ test -d ~/.codex && echo "Codex state found"
 test -f ~/.codex/state_5.sqlite && echo "state database found"
 ```
 
-需要 Python 3.9+，并且这台机器上已经登录和使用过 Codex。
+Windows PowerShell：
 
-### 3. 临时启动服务
+```powershell
+python --version
+Test-Path "$HOME\.codex"
+Test-Path "$HOME\.codex\state_5.sqlite"
+```
+
+需要 Python 3.9+，并且这台电脑上已经登录和使用过 Codex。
+
+### 4. 临时启动服务
 
 把 `/path/to/workspace` 换成你希望监控的 Codex 项目目录：
+
+macOS / Linux：
 
 ```bash
 CODEX_STATUS_WORKSPACE="/path/to/workspace" \
 CODEX_STATUS_PORT=8765 \
 python3 -m anything_codex_status.server
+```
+
+Windows PowerShell：
+
+```powershell
+$env:CODEX_STATUS_WORKSPACE="C:\path\to\workspace"
+$env:CODEX_STATUS_PORT="8765"
+python -m anything_codex_status.server
 ```
 
 本机打开：
@@ -125,23 +157,23 @@ http://127.0.0.1:8765/
 curl http://127.0.0.1:8765/api/status
 ```
 
-### 4. 手机或平板打开
+### 5. 手机或平板打开
 
-如果 Mac 和手机在同一可互通网络，可以打开：
+先确认运行 Codex 的电脑和手机/平板都已经安装并登录 Tailscale，然后在电脑上找 `100.x.y.z` 地址：
 
-```text
-http://<mac-lan-ip>:8765/
+优先使用 Tailscale 自带命令，macOS / Windows / Linux 都适用：
+
+```bash
+tailscale ip -4
 ```
 
-如果同一 Wi-Fi 不能互通，推荐使用 Tailscale。
-
-先在 Mac 和手机上都登录 Tailscale，然后在 Mac 上找 `100.x.y.z` 地址：
+如果 macOS / Linux 上没有 `tailscale` 命令，也可以尝试：
 
 ```bash
 ifconfig | grep '100\.'
 ```
 
-手机浏览器打开：
+手机或平板浏览器打开：
 
 ```text
 http://<mac-tailscale-ip>:8765/
@@ -160,9 +192,9 @@ http://100.x.y.z:8765/
 有些步骤 Codex 可以指导，但不能替你完成：
 
 1. 登录 Codex：目标 Mac 上必须已经登录并正常使用过 Codex。
-2. 安装并登录 Tailscale：Mac 和手机/平板都要加入同一个 Tailscale 网络。
+2. 安装并登录 Tailscale：运行 Codex 的电脑和手机/平板都要加入同一个 Tailscale 网络。
 3. 选择监控哪个项目：告诉 Codex 或命令行 `CODEX_STATUS_WORKSPACE` 应该指向哪个工作区。
-4. 在手机上打开 URL：Codex 可以给出地址，但需要你在手机浏览器里打开。
+4. 在手机/平板上打开 URL：Codex 可以给出地址，但需要你在展示设备的浏览器里打开。
 5. 决定是否持久化：临时服务适合测试；后台 LaunchAgent 会长期运行，必须由你明确同意。
 6. 处理系统权限弹窗：如果 macOS 防火墙询问是否允许 Python 接收入站连接，需要你手动允许。
 7. 隐私选择：如果旁边有人或屏幕会外显，关闭页面右上角 `Task` 开关，只保留账号和额度信息。
@@ -171,7 +203,7 @@ http://100.x.y.z:8765/
 
 ## 部署为后台服务
 
-确认手机能访问、并且你接受隐私风险后，可以安装为 macOS LaunchAgent。
+确认手机/平板能访问、并且你接受隐私风险后，可以安装为 macOS LaunchAgent。
 
 ```bash
 python3 scripts/install_launch_agent.py \
@@ -215,7 +247,7 @@ cp -R codex-skill/anything-codex-status/* ~/.codex/skills/anything-codex-status/
 之后可以问 Codex：
 
 ```text
-Use $anything-codex-status to start or repair my Codex phone status dashboard.
+Use $anything-codex-status to start or repair my Codex phone/tablet status dashboard.
 ```
 
 ---
@@ -236,7 +268,7 @@ Use $anything-codex-status to start or repair my Codex phone status dashboard.
 
 - 状态页没有登录认证。
 - 不建议暴露到公网。
-- 推荐只在 localhost、可信局域网或 Tailscale 私有网络里使用。
+- 推荐只在 localhost 或 Tailscale 私有网络里使用。
 - 页面可能显示账号邮箱、本机路径、任务标题、prompt 摘要和额度信息。
 - 浏览器每 3 秒刷新一次 `/api/status`，这不会消耗 Codex token，只会产生很轻的本机文件读取和网络流量。
 
@@ -250,7 +282,7 @@ Use $anything-codex-status to start or repair my Codex phone status dashboard.
 | 前端 | 单文件 HTML / CSS / JavaScript |
 | 数据来源 | Codex 本地状态与 rollout 日志 |
 | 部署 | 临时命令或 macOS LaunchAgent |
-| 远程访问 | Tailscale / 私有局域网 |
+| 远程访问 | Tailscale |
 
 ---
 

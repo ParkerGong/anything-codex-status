@@ -4,15 +4,16 @@ You are helping a user deploy Anything Codex Status on their Mac.
 
 ## Primary Goal
 
-Get a local dashboard running safely so the user can open it from a phone or lightweight display over localhost, LAN, or Tailscale.
+Get a local dashboard running safely so the user can open it from a phone or tablet over Tailscale. Use localhost only for local verification.
 
 ## Start Here
 
 1. Read `README.md` and `docs/CODEX_INSTALL.md`.
 2. Confirm this is the user's intent: a private local dashboard that may show account email, workspace paths, task titles, prompt snippets, and quota information.
-3. Prefer a temporary server first. Do not install a persistent LaunchAgent until the user explicitly approves persistence after seeing the privacy warning.
-4. Use `CODEX_STATUS_WORKSPACE` to point at the workspace the user wants monitored.
-5. Verify `http://127.0.0.1:8765/api/status` before giving the phone URL.
+3. Confirm the remote display device can install and sign in to Tailscale.
+4. Prefer a temporary server first. Do not install a persistent LaunchAgent until the user explicitly approves persistence after seeing the privacy warning.
+5. Use `CODEX_STATUS_WORKSPACE` to point at the workspace the user wants monitored.
+6. Verify `http://127.0.0.1:8765/api/status` before giving the Tailscale phone/tablet URL.
 
 ## Useful Commands
 

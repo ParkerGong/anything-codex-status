@@ -1,8 +1,12 @@
 # Anything Codex Status
 
-Turn an idle phone, tablet, Kindle browser, or any browser-capable device into a private Codex status screen.
+Turn an idle phone or tablet that can install and sign in to Tailscale into a private Codex status screen.
 
 The main README is written in Chinese first: [简体中文](README.md).
+
+## External Requirement
+
+Remote display access depends on Tailscale. The Mac running Codex and the phone/tablet used as the status screen must be in the same tailnet. Tailscale's open-source repository is [tailscale/tailscale](https://github.com/tailscale/tailscale).
 
 ## What It Does
 
@@ -11,7 +15,7 @@ The main README is written in Chinese first: [简体中文](README.md).
 - Uses the Codex sidebar-style short title for the current task.
 - Shows recent request and activity.
 - Provides a `Task` switch for an account-and-quota-only view.
-- Works well over Tailscale for phone/tablet dashboards.
+- Uses Tailscale for phone/tablet dashboards.
 
 ## Recommended Install Flow
 
@@ -26,7 +30,7 @@ Only install a persistent LaunchAgent after I explicitly approve it.
 ## Manual Quick Start
 
 ```bash
-git clone <GITHUB_REPO_URL>
+git clone https://github.com/ParkerGong/anything-codex-status.git
 cd anything-codex-status
 CODEX_STATUS_WORKSPACE="/path/to/workspace" CODEX_STATUS_PORT=8765 python3 -m anything_codex_status.server
 ```
@@ -40,4 +44,4 @@ http://<mac-tailscale-ip>:8765/
 
 ## Security
 
-The dashboard is unauthenticated and may display account email, local paths, task titles, prompt snippets, and quota information. Use localhost, trusted LAN, or Tailscale only. Browser refreshes read local files and do not consume Codex tokens.
+The dashboard is unauthenticated and may display account email, local paths, task titles, prompt snippets, and quota information. Use localhost for local checks or Tailscale for remote display access. Browser refreshes read local files and do not consume Codex tokens.

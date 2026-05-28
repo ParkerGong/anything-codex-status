@@ -12,7 +12,7 @@ license = { text = "MIT" }
 authors = [
   { name = "Parker Six" }
 ]
-keywords = ["codex", "dashboard", "tailscale", "status", "iphone", "kindle"]
+keywords = ["codex", "dashboard", "tailscale", "status", "iphone", "tablet"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Web Environment",
