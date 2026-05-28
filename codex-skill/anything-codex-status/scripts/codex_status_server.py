@@ -17,6 +17,7 @@ STATE_DB = CODEX_HOME / "state_5.sqlite"
 GOALS_DB = CODEX_HOME / "goals_1.sqlite"
 ACCOUNTS_REGISTRY = CODEX_HOME / "accounts" / "registry.json"
 SESSION_INDEX = CODEX_HOME / "session_index.jsonl"
+FINAL_PHASES = {"final", "final_answer"}
 
 
 INDEX_HTML = """<!doctype html>
@@ -757,6 +758,7 @@ def parse_rollout(path):
         return result
 
     activity = []
+    latest_meaningful_rate_limits = None
 
     def add_activity(epoch, kind, message):
         text = shorten(message, 110)
@@ -787,7 +789,7 @@ def parse_rollout(path):
                     msg = payload.get("message") or ""
                     phase = payload.get("phase") or ""
                     result["latest_assistant_message"] = shorten(msg, 220)
-                    if phase == "final":
+                    if phase in FINAL_PHASES:
                         result["last_final_epoch"] = epoch
                     add_activity(epoch, "CODEX", msg)
                 elif ptype == "token_count":
@@ -796,7 +798,19 @@ def parse_rollout(path):
                         "rate_limits": payload.get("rate_limits") or {},
                     }
                     result["usage"] = normalize_usage(usage)
+                    rate_limits = result["usage"].get("rate_limits") or {}
+                    if has_meaningful_rate_limits(rate_limits):
+                        latest_meaningful_rate_limits = rate_limits
                     add_activity(epoch, "USAGE", "quota sample updated")
+                elif ptype == "task_complete":
+                    completed_at = payload.get("completed_at")
+                    if completed_at:
+                        result["last_final_epoch"] = completed_at
+                    elif epoch:
+                        result["last_final_epoch"] = epoch
+                    msg = payload.get("last_agent_message") or "task complete"
+                    result["latest_assistant_message"] = shorten(msg, 220)
+                    add_activity(result["last_final_epoch"], "CODEX", msg)
 
             elif typ == "response_item":
                 rtype = payload.get("type")
@@ -810,7 +824,7 @@ def parse_rollout(path):
                         add_activity(epoch, "USER", msg)
                     elif role == "assistant":
                         result["latest_assistant_message"] = shorten(msg, 220)
-                        if phase == "final":
+                        if phase in FINAL_PHASES:
                             result["last_final_epoch"] = epoch
                         add_activity(epoch, "CODEX", msg)
                 elif rtype == "function_call":
@@ -833,6 +847,13 @@ def parse_rollout(path):
     result["activity"] = [
         f"{entry['minute']} {entry['kind']} {entry['text']}" for entry in recent
     ]
+    usage = result.get("usage") or {}
+    current_rate_limits = usage.get("rate_limits") or {}
+    if latest_meaningful_rate_limits and should_fallback_rate_limits(current_rate_limits):
+        fallback_rate_limits = dict(latest_meaningful_rate_limits)
+        fallback_rate_limits["fallback_from_limit_id"] = current_rate_limits.get("limit_id")
+        fallback_rate_limits["source"] = "recent_valid_sample"
+        usage["rate_limits"] = fallback_rate_limits
     return result
 
 
@@ -856,6 +877,31 @@ def normalize_limit(limit):
         "resets_at": resets,
         "reset_relative": f"resets {relative_time(resets)}" if resets else None,
     }
+
+
+def limit_used_percent(limit):
+    if not isinstance(limit, dict):
+        return None
+    value = limit.get("used_percent")
+    return value if isinstance(value, (int, float)) else None
+
+
+def has_meaningful_rate_limits(rate_limits):
+    if not isinstance(rate_limits, dict):
+        return False
+    primary = limit_used_percent(rate_limits.get("primary"))
+    secondary = limit_used_percent(rate_limits.get("secondary"))
+    return any(value is not None and value > 0 for value in [primary, secondary])
+
+
+def should_fallback_rate_limits(rate_limits):
+    if not isinstance(rate_limits, dict):
+        return False
+    if rate_limits.get("limit_id") in {None, "codex"}:
+        return False
+    primary = limit_used_percent(rate_limits.get("primary"))
+    secondary = limit_used_percent(rate_limits.get("secondary"))
+    return primary == 0 and secondary == 0
 
 
 def normalize_usage(raw):

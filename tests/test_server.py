@@ -85,6 +85,86 @@ class ServerHelpersTest(unittest.TestCase):
         ]
         self.assertEqual(len(repeated_activity), 1)
 
+    def test_parse_rollout_treats_final_answer_and_task_complete_as_ready(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rollout = Path(tmpdir) / "rollout.jsonl"
+            rows = [
+                {
+                    "timestamp": "2026-05-28T01:00:00Z",
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "agent_message",
+                        "message": "Done",
+                        "phase": "final_answer",
+                    },
+                },
+                {
+                    "timestamp": "2026-05-28T01:00:01Z",
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "task_complete",
+                        "completed_at": 1780000001,
+                        "last_agent_message": "All set",
+                    },
+                },
+            ]
+            rollout.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+
+            parsed = server.parse_rollout(rollout)
+
+        self.assertEqual(parsed["last_final_epoch"], 1780000001)
+        self.assertEqual(parsed["latest_assistant_message"], "All set")
+
+    def test_parse_rollout_falls_back_from_zero_non_codex_quota_bucket(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rollout = Path(tmpdir) / "rollout.jsonl"
+            rows = [
+                {
+                    "timestamp": "2026-05-28T01:00:00Z",
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "token_count",
+                        "info": {
+                            "total_token_usage": {"total_tokens": 1000},
+                            "last_token_usage": {"total_tokens": 100},
+                        },
+                        "rate_limits": {
+                            "limit_id": "codex",
+                            "plan_type": "prolite",
+                            "primary": {"used_percent": 22, "window_minutes": 300},
+                            "secondary": {"used_percent": 18, "window_minutes": 10080},
+                        },
+                    },
+                },
+                {
+                    "timestamp": "2026-05-28T01:00:10Z",
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "token_count",
+                        "info": {
+                            "total_token_usage": {"total_tokens": 1200},
+                            "last_token_usage": {"total_tokens": 200},
+                        },
+                        "rate_limits": {
+                            "limit_id": "codex_bengalfox",
+                            "plan_type": "prolite",
+                            "primary": {"used_percent": 0.0, "window_minutes": 300},
+                            "secondary": {"used_percent": 0.0, "window_minutes": 10080},
+                        },
+                    },
+                },
+            ]
+            rollout.write_text("\n".join(json.dumps(row) for row in rows), encoding="utf-8")
+
+            parsed = server.parse_rollout(rollout)
+
+        self.assertEqual(parsed["usage"]["total_tokens"], 1200)
+        rate = parsed["usage"]["rate_limits"]
+        self.assertEqual(rate["limit_id"], "codex")
+        self.assertEqual(rate["primary"]["used_percent"], 22)
+        self.assertEqual(rate["secondary"]["used_percent"], 18)
+        self.assertEqual(rate["fallback_from_limit_id"], "codex_bengalfox")
+
     def test_query_active_account_returns_public_summary_only(self):
         old_registry = server.ACCOUNTS_REGISTRY
         with tempfile.TemporaryDirectory() as tmpdir:
