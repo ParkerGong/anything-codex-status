@@ -10,19 +10,7 @@
 
 > 开始前请先确认：你准备用作监控屏的 iOS 或 Android 手机/平板必须能安装并登录 Tailscale。不能安装或无法登录 Tailscale 的设备，不适合作为这个项目的展示设备。
 
-[使用前提：需要 Tailscale](#使用前提需要-tailscale) • [核心亮点](#核心亮点) • [功能说明](#功能说明) • [交给 Codex 安装](#交给-codex-安装) • [手动安装](#手动安装) • [用户必须操作的步骤](#用户必须手动操作的步骤) • [部署为后台服务](#部署为后台服务) • [安全说明](#安全说明) • [开发与测试](#开发与测试)
-
----
-
-## 使用前提：需要 Tailscale
-
-这个项目的前提是：运行 Codex 的电脑和用作监控屏的设备都能安装并登录 Tailscale。Tailscale 官方下载页列出 macOS、iOS、Windows、Linux、Android 客户端；[tailscale/tailscale](https://github.com/tailscale/tailscale) 仓库也说明核心 daemon 支持 Linux、Windows、macOS，并对 FreeBSD/OpenBSD 有不同程度支持。
-
-- 运行 Codex 的电脑：可以是 macOS、Windows 或 Linux；它负责运行 Codex 和状态服务，并加入你的 Tailscale 网络。
-- 闲置手机/平板：iOS 和 Android 都可以；安装 Tailscale，登录同一个账号或同一个 tailnet，然后用浏览器打开运行 Codex 电脑的 `100.x.y.z` 地址。
-- 不能安装或不能登录 Tailscale 的设备，不作为这个项目的目标展示设备。
-
-本机调试可以使用 `http://127.0.0.1:8765/`，但真正把手机或平板变成监控屏时，推荐只通过 Tailscale 私有网络访问。
+[核心亮点](#核心亮点) • [功能说明](#功能说明) • [使用前提：需要 Tailscale](#使用前提需要-tailscale) • [用户必须操作的步骤](#用户必须手动操作的步骤) • [交给 Codex 安装](#交给-codex-安装) • [手动安装](#手动安装) • [部署为后台服务](#部署为后台服务) • [安全说明](#安全说明) • [开发与测试](#开发与测试)
 
 ---
 
@@ -54,9 +42,37 @@ Anything Codex Status 不是 Codex 的替代品，也不会接管你的任务。
 
 ---
 
+## 使用前提：需要 Tailscale
+
+这个项目的前提是：运行 Codex 的电脑和用作监控屏的设备都能安装并登录 Tailscale。Tailscale 官方下载页列出 macOS、iOS、Windows、Linux、Android 客户端；[tailscale/tailscale](https://github.com/tailscale/tailscale) 仓库也说明核心 daemon 支持 Linux、Windows、macOS，并对 FreeBSD/OpenBSD 有不同程度支持。
+
+- 运行 Codex 的电脑：可以是 macOS、Windows 或 Linux；它负责运行 Codex 和状态服务，并加入你的 Tailscale 网络。
+- 闲置手机/平板：iOS 和 Android 都可以；安装 Tailscale，登录同一个账号或同一个 tailnet，然后用浏览器打开运行 Codex 电脑的 `100.x.y.z` 地址。
+- 不能安装或不能登录 Tailscale 的设备，不作为这个项目的目标展示设备。
+
+本机调试可以使用 `http://127.0.0.1:8765/`，但真正把手机或平板变成监控屏时，推荐只通过 Tailscale 私有网络访问。
+
+---
+
+## 用户必须手动操作的步骤
+
+有些步骤 Codex 可以指导，但不能替你完成：
+
+1. 登录 Codex：运行状态服务的电脑上必须已经登录并正常使用过 Codex。
+2. 安装并登录 Tailscale：运行 Codex 的电脑和手机/平板都要加入同一个 Tailscale 网络。
+3. 选择监控哪个项目：告诉 Codex 或命令行 `CODEX_STATUS_WORKSPACE` 应该指向哪个工作区。
+4. 在手机/平板上打开 URL：Codex 可以给出地址，但需要你在展示设备的浏览器里打开。
+5. 决定是否持久化：临时服务适合测试；后台服务会长期运行，必须由你明确同意。
+6. 处理系统权限弹窗：如果系统防火墙询问是否允许 Python 接收入站连接，需要你手动允许。
+7. 隐私选择：如果旁边有人或屏幕会外显，关闭页面右上角 `Task` 开关，只保留账号和额度信息。
+
+---
+
 ## 交给 Codex 安装
 
 在新机器上，推荐直接把 GitHub 仓库交给 Codex。你可以这样说：
+
+> 适配性声明：本项目目前基于 macOS 开发和测试。如果你要在 Windows 或 Linux 上安装，请务必让 Codex 先检查路径、Python 命令、Codex 本地状态位置、防火墙和持久化方式是否适配当前系统。
 
 ```text
 请阅读这个仓库并帮我把 Anything Codex Status 部署到这台运行 Codex 的电脑上：
@@ -187,20 +203,6 @@ http://<mac-tailscale-ip>:8765/
 ```text
 http://100.x.y.z:8765/
 ```
-
----
-
-## 用户必须手动操作的步骤
-
-有些步骤 Codex 可以指导，但不能替你完成：
-
-1. 登录 Codex：目标 Mac 上必须已经登录并正常使用过 Codex。
-2. 安装并登录 Tailscale：运行 Codex 的电脑和手机/平板都要加入同一个 Tailscale 网络。
-3. 选择监控哪个项目：告诉 Codex 或命令行 `CODEX_STATUS_WORKSPACE` 应该指向哪个工作区。
-4. 在手机/平板上打开 URL：Codex 可以给出地址，但需要你在展示设备的浏览器里打开。
-5. 决定是否持久化：临时服务适合测试；后台 LaunchAgent 会长期运行，必须由你明确同意。
-6. 处理系统权限弹窗：如果 macOS 防火墙询问是否允许 Python 接收入站连接，需要你手动允许。
-7. 隐私选择：如果旁边有人或屏幕会外显，关闭页面右上角 `Task` 开关，只保留账号和额度信息。
 
 ---
 
