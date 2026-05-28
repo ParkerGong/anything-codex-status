@@ -19,12 +19,15 @@ Remote display access depends on Tailscale. The Mac running Codex and the phone/
 
 ## Recommended Install Flow
 
-Give this repository to Codex on the target Mac and ask:
+Give this repository to Codex on the computer running Codex and ask:
 
 ```text
 Read this repository and help me deploy Anything Codex Status.
+Explain what local Codex data it reads, then check Python, local Codex state, Tailscale, and port usage.
 Start a temporary server first, verify /api/status, then give me the localhost and Tailscale URLs.
-Only install a persistent LaunchAgent after I explicitly approve it.
+Only configure persistent background running after I explicitly approve it.
+On macOS, LaunchAgent is fine; on Windows or Linux, choose the appropriate system option and tell me where it is written and how to stop or remove it.
+If I want the dashboard to auto-start after reboot/login or remain continuously reachable from my phone/tablet, remind me that persistence is required.
 ```
 
 ## Manual Quick Start

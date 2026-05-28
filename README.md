@@ -59,11 +59,12 @@ Anything Codex Status 不是 Codex 的替代品，也不会接管你的任务。
 在新机器上，推荐直接把 GitHub 仓库交给 Codex。你可以这样说：
 
 ```text
-请阅读这个仓库并帮我把 Anything Codex Status 部署到这台 Mac 上：
+请阅读这个仓库并帮我把 Anything Codex Status 部署到这台运行 Codex 的电脑上：
 https://github.com/ParkerGong/anything-codex-status
 
-请先解释它会读取哪些本地 Codex 数据，再检查 Python、Codex 本地状态和 Tailscale。
-先启动临时服务让我用手机测试；只有我明确同意后，才安装 LaunchAgent 后台服务。
+请先解释它会读取哪些本地 Codex 数据，再检查 Python、Codex 本地状态、Tailscale 和端口占用。
+先启动临时服务，让我用 iOS/Android 手机或平板通过 Tailscale 测试。
+只有我明确同意后，才做持久化部署；如果是 macOS 可以使用 LaunchAgent，如果是 Windows 或 Linux，请按当前系统选择合适的后台运行方式，并先告诉我会写入哪里、如何停止和移除。
 ```
 
 如果仓库已经 clone 到本机，可以这样说：
@@ -72,6 +73,8 @@ https://github.com/ParkerGong/anything-codex-status
 请阅读当前仓库，帮我部署 Codex 状态监控屏。
 目标是让我的闲置手机或平板通过 Tailscale 打开状态页。
 先临时启动服务，验证 /api/status，再告诉我本机 URL 和 Tailscale URL。
+不要直接安装持久化服务；只有我确认测试可用并明确同意后，才继续配置后台运行。
+如果我希望电脑重启后自动启动，或希望手机/平板可以持续访问状态页，请提醒我需要做持久化部署。
 ```
 
 Codex 可以参考这些文件：
@@ -202,6 +205,8 @@ http://100.x.y.z:8765/
 ---
 
 ## 部署为后台服务
+
+临时服务只适合测试或短时间使用。若你希望电脑重启或重新登录后自动启动状态页，或者希望手机/平板可以长期持续访问，就需要做持久化部署。
 
 确认手机/平板能访问、并且你接受隐私风险后，可以安装为 macOS LaunchAgent。
 
